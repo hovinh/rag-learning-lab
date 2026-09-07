@@ -1,0 +1,18 @@
+# All dependencies (runtime + dev). Compile with:
+#   pip-compile requirements.in
+# Do not hand-edit requirements.txt; edit this file and recompile.
+
+requests
+pdfplumber
+kuzu
+openai
+python-dotenv
+tiktoken
+pydantic
+logzero
+
+# dev
+pip-tools
+pytest
+ruff
+mypy

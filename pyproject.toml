@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graphrag"
+version = "0.1.0"
+description = "Re-implementation of the Essential GraphRAG book as a reusable, OOP Python library, backed by Kuzu instead of Neo4j."
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["template"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["graphrag"]
+
+[[tool.mypy.overrides]]
+module = "logzero"
+ignore_missing_imports = true
