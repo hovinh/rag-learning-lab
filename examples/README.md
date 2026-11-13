@@ -140,3 +140,90 @@ sound reproduction?" → "Who were Einstein's professional associates?").
 The rewritten question is only used to *retrieve* context; the original
 question is still what's sent to the LLM for the final answer, so the
 answer stays scoped to what was actually asked.
+
+## Chapter 4 — text2cypher
+
+Script: [text2cypher_movies.py](text2cypher_movies.py)
+(re-implements `template/kg-rag/notebooks/ch04.ipynb`).
+
+Run from the repo root (requires `OPENAI_API_KEY` in `.env`, see
+`.env.example`):
+
+```
+.venv/Scripts/python.exe examples/text2cypher_movies.py --process-name ch04_text2cypher_movies
+```
+
+Pipeline: seed a movies graph into Kuzu (`MovieGraphSeeder`) → read its
+schema (`KuzuCypherGraphStore.get_schema()`) → have the LLM write a Cypher
+query for the question (`Text2Cypher`) → run that query against the graph
+and log the rows. The book's notebook stops after printing the Cypher;
+running it is added here because it's what proves the query is valid, and
+ch05's `text2cypher` tool needs it anyway.
+
+Chapters 2 and 3 retrieve unstructured *text*. text2cypher answers from
+*structured* data instead: questions like "Who directed the most movies?"
+need counting and aggregation across many nodes, which no amount of chunk
+similarity search can do, but which one Cypher query answers exactly.
+
+### The movies dataset
+
+The book assumes Neo4j's "Movies" demo graph is already loaded. Kuzu has
+no such sample, so
+[`graphrag/datasets/movies/`](../src/graphrag/datasets/movies/) holds a
+small hand-curated graph in the same shape: 14 films, 48 people, and
+`ACTED_IN` (with `roles`), `DIRECTED`, `PRODUCED`, and `WROTE`
+relationships. The films are picked so the questions in
+`template/kg-rag/data/benchmark_data.csv` (used by ch08) have answers, e.g.
+Top Gun, The Matrix, and several Tom Hanks films. Cast, crew, years, and
+birth years are real; **`votes` values are illustrative**, made up only so
+the benchmark's "more than 5000 votes" question has something to filter.
+
+[`MovieGraphSeeder.seed()`](../src/graphrag/datasets/movie_graph.py)
+drops and recreates the tables and then bulk-loads one CSV per table with
+`COPY ... FROM`. Unlike Neo4j, Kuzu needs every node and relationship table
+declared (`CREATE NODE TABLE` / `CREATE REL TABLE`) before data goes in.
+
+### How the schema is read from Kuzu
+
+The book's `get_schema()` calls APOC's `apoc.meta.data()`, which samples
+the Neo4j graph to infer which labels, properties, and relationship
+patterns exist. Kuzu has no APOC, but it doesn't need to infer anything:
+every table is declared up front, so
+[`KuzuCypherGraphStore.get_schema()`](../src/graphrag/graph/kuzu_cypher_store.py)
+reads it straight from the catalog:
+
+- `CALL show_tables()`: every node and rel table
+- `CALL table_info('<table>')`: each table's properties and types
+- `CALL show_connection('<rel table>')`: which node tables a rel table
+  connects, giving the `(:Person)-[:DIRECTED]->(:Movie)` patterns
+
+[`GraphSchema.to_prompt()`](../src/graphrag/graph/models.py) formats this
+in the book's layout. Property types are Kuzu's (`INT64`, `STRING[]`), not
+Neo4j's, since those are the types the generated query runs against.
+
+### How the prompt is assembled
+
+[`Text2Cypher`](../src/graphrag/graph/text2cypher.py) builds the prompt
+from the book's sections, each loaded from a `text2cypher_*.txt` file in
+[`graphrag/prompts/`](../src/graphrag/prompts/):
+
+1. **Instructions and format rules**: write only Cypher, with no
+   explanation and no code fences, so the output can be executed as-is.
+   One line is added to the book's wording: the target is Kuzu, so the LLM
+   sticks to Cypher that Kuzu supports.
+2. **Schema**: the labels, properties, and relationship patterns above,
+   with an instruction to use nothing else. This is the main defence
+   against invented relationship types or properties.
+3. **Terminology mapping** (optional): links the user's words to the
+   schema, e.g. "actor/director/producer" all mean a `Person` node. Without
+   it, the LLM might look for a `Director` label.
+4. **Few-shot examples** (optional): question/Cypher pairs showing
+   patterns the LLM might not find on its own, like the book's
+   "two people who acted together most" self-join.
+5. **The question.**
+
+The book's class sets sections through a mutable `set_prompt_section()`.
+Here everything except the question is fixed in the constructor, so one
+instance can answer many questions, which is how ch05 will reuse it as an
+agent tool. Kuzu ran the book's few-shot query (including
+`WHERE p1 <> p2` on nodes) unchanged, so no dialect workaround was needed.

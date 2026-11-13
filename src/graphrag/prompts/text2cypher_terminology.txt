@@ -1,0 +1,3 @@
+Terminology mapping:
+This section is helpful to map terminology between the user question and the graph database schema.
+{terminology}

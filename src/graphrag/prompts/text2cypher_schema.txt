@@ -1,0 +1,4 @@
+Graph Database Schema:
+Use only the provided relationship types and properties in the schema.
+Do not use any other relationship types or properties that are not provided in the schema.
+{schema}
