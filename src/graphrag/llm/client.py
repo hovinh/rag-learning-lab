@@ -4,7 +4,7 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 from openai import OpenAI, omit
 from openai.types.chat import (
@@ -13,11 +13,13 @@ from openai.types.chat import (
     ChatCompletionMessageParam,
     ChatCompletionToolUnionParam,
 )
+from pydantic import BaseModel
 
 from graphrag.llm.errors import LLMResponseError
 
 Message = dict[str, str]
 ToolDefinition = dict[str, Any]
+ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,23 @@ class LLMClient(ABC):
         none.
 
         Raises ``LLMResponseError`` if a call's arguments aren't valid JSON.
+        """
+
+    @abstractmethod
+    def parse(
+        self,
+        messages: list[Message],
+        response_model: type[ModelT],
+        *,
+        model: str,
+        temperature: float = 0.0,
+    ) -> ModelT:
+        """Structured outputs (ch06): constrain the response to
+        ``response_model``'s JSON schema and return it parsed. Unlike
+        ``json_mode``, the schema itself is enforced, not just valid JSON.
+
+        Raises ``LLMResponseError`` if the LLM refuses or returns nothing
+        to parse.
         """
 
 
@@ -136,3 +155,23 @@ class OpenAILLMClient(LLMClient):
                 ) from exc
             calls.append(ToolCall(call.function.name, arguments))
         return calls
+
+    def parse(
+        self,
+        messages: list[Message],
+        response_model: type[ModelT],
+        *,
+        model: str = DEFAULT_MODEL,
+        temperature: float = 0.0,
+    ) -> ModelT:
+        response = self._client.chat.completions.parse(
+            model=model,
+            messages=cast("list[ChatCompletionMessageParam]", messages),
+            temperature=temperature,
+            response_format=response_model,
+        )
+        message = response.choices[0].message
+        if message.parsed is None:
+            reason = f": {message.refusal}" if message.refusal else ""
+            raise LLMResponseError(f"No {response_model.__name__} in the response{reason}")
+        return message.parsed

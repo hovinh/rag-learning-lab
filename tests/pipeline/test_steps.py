@@ -75,6 +75,9 @@ class FakeLLMClient(LLMClient):
     def choose_tools(self, messages, tools, *, model, temperature=0.0):
         raise NotImplementedError
 
+    def parse(self, messages, response_model, *, model, temperature=0.0):
+        raise NotImplementedError
+
 
 def test_answer_step_builds_prompt_from_prompt_files_and_streams_answer(tmp_path):
     (tmp_path / "answer_system.txt").write_text("Be helpful.", encoding="utf-8")

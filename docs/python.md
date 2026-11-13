@@ -21,7 +21,7 @@ Each notebook concept becomes a class with a narrow, explicit interface:
 | Step-back prompting, parent-child retrieval (ch03)     | `QueryRewriter`, `ParentChildGraphStore`             |
 | text2cypher (ch04)                                     | `Text2Cypher`, `CypherGraphStore`, `MovieGraphSeeder` |
 | Agentic RAG: tool routing, critique loop (ch05)        | `Agent`, `QueryUpdater`, `ToolRouter`, `AnswerCritic`, `Tool` |
-| Structured extraction into a KG (ch06)                 | Pydantic models + an `Extractor` class               |
+| Structured extraction into a KG (ch06)                 | `Contract` models, `StructuredExtractor`, `ContractGraphImporter` |
 | LLM-driven KG construction, local/global search (ch07) | `KnowledgeGraphExtractor`, retrievers                |
 | RAG evaluation against a benchmark (ch08)              | an evaluator over `benchmark_data.csv`               |
 
@@ -49,13 +49,14 @@ Guidelines:
 src/
   graphrag/
     ingestion/      # PdfLoader, TextChunker, SectionSplitter
-    llm/             # LLMClient (OpenAI wrapper), QueryRewriter
+    llm/             # LLMClient (OpenAI wrapper, incl. structured outputs), QueryRewriter
     graph/           # GraphStore/CypherGraphStore ABCs, Kuzu stores, Text2Cypher
-    datasets/        # sample graphs (e.g. MovieGraphSeeder + its CSVs)
+    datasets/        # sample data (MovieGraphSeeder + its CSVs, ch06's contract text)
     retrieval/       # Embedder, VectorIndex
     prompts/         # PromptRepository + prompt text files
     pipeline/        # Pipeline runner + steps shared across chapters
     agent/           # Agent, QueryUpdater, ToolRouter, AnswerCritic, Tool subclasses
+    extraction/      # Pydantic extraction models, StructuredExtractor, ContractGraphImporter
 tests/
   ...                # mirrors src/graphrag structure
 docs/

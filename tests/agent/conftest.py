@@ -26,6 +26,9 @@ class ScriptedLLMClient(LLMClient):
         self.choose_tools_calls.append({"messages": messages, "tools": tools, "model": model})
         return self.tool_calls.pop(0)
 
+    def parse(self, messages, response_model, *, model, temperature=0.0):
+        raise NotImplementedError
+
 
 @pytest.fixture
 def llm():

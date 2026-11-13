@@ -327,3 +327,98 @@ of naming *Reloaded*. The tools returned the right rows; this is the final
 LLM call reading them conservatively. The second question goes to
 `text2cypher`, which returns 10 directors and 4 producers, matching the
 seeded graph. The critic is satisfied, so there's no second round.
+
+## Chapter 6 — Structured extraction into a knowledge graph
+
+Script: [structured_extraction_contracts.py](structured_extraction_contracts.py)
+(re-implements `template/kg-rag/notebooks/ch06.ipynb`).
+
+Run from the repo root (requires `OPENAI_API_KEY` in `.env`, see
+`.env.example`):
+
+```
+.venv/Scripts/python.exe examples/structured_extraction_contracts.py --process-name ch06_structured_extraction_contracts
+```
+
+Chapters 2–5 query text or a graph that already exists. Ch06 **builds** a
+graph from a document. You decide up front which entities matter, write
+them down as Pydantic models, and have the LLM fill them in from a legal
+contract. Ch07 drops the predefined schema and lets the LLM decide.
+
+Pipeline: load the contract
+([`LICENSE_AGREEMENT_PATH`](../src/graphrag/datasets/sample_contracts.py),
+a 1999 licensing and web site hosting agreement from an SEC filing) →
+extract a `Contract`
+([`StructuredExtractor`](../src/graphrag/extraction/extractor.py)) →
+import it into its own `_ch06` Kuzu database
+([`ContractGraphImporter`](../src/graphrag/extraction/contract_importer.py))
+→ query the parties back. The database is reset on every run.
+
+### Structured outputs
+
+[`LLMClient.parse()`](../src/graphrag/llm/client.py) passes the Pydantic
+model as `response_format`. The API turns it into a JSON schema and
+**constrains decoding to it**: the response always has every field, with
+the declared types, and `contract_type` is always one of the five listed
+values. This is stronger than ch05's `json_mode`, which only guarantees
+valid JSON, so the prompt had to describe the shape. Here the field
+`description`s in [contract_models.py](../src/graphrag/extraction/contract_models.py)
+are the instructions the LLM sees for each field.
+
+Strict mode requires every field to be present. That's why the optional
+fields are `str | None` with no default (required, but may be null)
+rather than having a default value.
+
+[`StructuredExtractor`](../src/graphrag/extraction/extractor.py) isn't tied
+to contracts. It takes any Pydantic model plus a system message
+(`contract_extraction_system.txt` here, the book's wording) and sends the
+whole document in one call. The agreement is ~33k characters, well within
+the context window, so there's no chunking.
+
+### The graph model
+
+```
+(:Organization {name})-[:HAS_PARTY {role}]->(:Contract {id, contract_type, effective_date,
+    term, contract_scope, end_date, total_amount, governing_law})
+(:Organization)-[:LOCATED_AT]->(:Location {full_address, address, city, state, country})
+```
+
+Organizations are keyed by `name` and locations by `full_address`, and both
+are merged. A second contract with the same party links to the existing
+organization node, which is how a graph of many contracts connects up.
+Every import creates a new `Contract`, with a `gen_random_uuid()` id.
+
+### Where this departs from the book
+
+- **Tables instead of constraints.** Kuzu needs node and rel tables
+  declared before any data goes in (`create_schema()`). Each key the book
+  makes unique with `CREATE CONSTRAINT` is the table's primary key here.
+- **Null-safe concatenation.** The book builds `fullAddress` and
+  `governing_law` with Cypher's `+`, and `'a' + null` is `null`. If the
+  extracted location has no street address, which the schema allows,
+  `fullAddress` becomes null and the `MERGE` on it fails. Here
+  `Location.full_address()` joins only the parts that are present.
+- **`CREATE`, not `MERGE`, for the contract.** The book merges on
+  `{id: randomUUID()}`. That id is new every time, so the `MERGE` never
+  matches anything and always creates.
+- **Several small queries.** The book sends one `UNWIND $data.parties`
+  query with the whole nested dict as a parameter. Here there's one query
+  for the contract plus one per party, with flat parameters. That avoids
+  depending on Kuzu's type inference for nested structs that contain
+  nulls, and each query can be tested on its own.
+- **`Literal` for the contract type.** The book passes `enum=` to
+  `Field`, which Pydantic v2 deprecates. A `Literal` gives the same JSON
+  schema `enum`, and Pydantic validates it too.
+- **Typed result.** `parse()` returns the `Contract` instance rather than
+  `json.loads` of the raw content. A refusal raises `LLMResponseError`.
+- **Read back.** The book stops at the import. The script then queries the
+  contract's parties, roles and locations to show what landed.
+
+### What a run looks like
+
+The LLM extracts a *Licensing Agreement* between *Mortgage Logic.com,
+Inc.* (Client, Irvine CA) and *TrueLink, Inc.* (Provider, San Luis Obispo
+CA). It's effective 1999-02-26 with a one-year, auto-renewing term, and
+governed by California law. `end_date` and `total_amount` come back null:
+the agreement has neither a fixed end date nor a single total value. The
+final query returns both parties with their role and location.

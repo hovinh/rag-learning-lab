@@ -1,3 +1,4 @@
 from graphrag.datasets.movie_graph import MovieGraphSeeder
+from graphrag.datasets.sample_contracts import LICENSE_AGREEMENT_PATH
 
-__all__ = ["MovieGraphSeeder"]
+__all__ = ["LICENSE_AGREEMENT_PATH", "MovieGraphSeeder"]

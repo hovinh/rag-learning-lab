@@ -17,6 +17,9 @@ class FakeLLMClient(LLMClient):
     def choose_tools(self, messages, tools, *, model, temperature=0.0):
         raise NotImplementedError
 
+    def parse(self, messages, response_model, *, model, temperature=0.0):
+        raise NotImplementedError
+
 
 def test_step_back_returns_llm_response():
     llm = FakeLLMClient("What is Jan Sindel's personal history?")
