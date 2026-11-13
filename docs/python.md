@@ -20,7 +20,7 @@ Each notebook concept becomes a class with a narrow, explicit interface:
 | PDF ingestion, chunking, vector & hybrid search (ch02) | `PdfLoader`, `TextChunker`, `Embedder`, `GraphStore` |
 | Step-back prompting, parent-child retrieval (ch03)     | `QueryRewriter`, `ParentChildGraphStore`             |
 | text2cypher (ch04)                                     | `Text2Cypher`, `CypherGraphStore`, `MovieGraphSeeder` |
-| Agentic RAG: tool routing, critique loop (ch05)        | `ToolRouter`, `Agent`                                |
+| Agentic RAG: tool routing, critique loop (ch05)        | `Agent`, `QueryUpdater`, `ToolRouter`, `AnswerCritic`, `Tool` |
 | Structured extraction into a KG (ch06)                 | Pydantic models + an `Extractor` class               |
 | LLM-driven KG construction, local/global search (ch07) | `KnowledgeGraphExtractor`, retrievers                |
 | RAG evaluation against a benchmark (ch08)              | an evaluator over `benchmark_data.csv`               |
@@ -55,7 +55,7 @@ src/
     retrieval/       # Embedder, VectorIndex
     prompts/         # PromptRepository + prompt text files
     pipeline/        # Pipeline runner + steps shared across chapters
-    agent/           # ToolRouter, Agent, tool definitions
+    agent/           # Agent, QueryUpdater, ToolRouter, AnswerCritic, Tool subclasses
 tests/
   ...                # mirrors src/graphrag structure
 docs/

@@ -7,11 +7,14 @@ class FakeLLMClient(LLMClient):
         self.response = response
         self.calls: list[tuple[list[Message], str, float]] = []
 
-    def complete(self, messages, *, model, temperature=0.0):
+    def complete(self, messages, *, model, temperature=0.0, json_mode=False):
         self.calls.append((messages, model, temperature))
         return self.response
 
     def stream(self, messages, *, model, temperature=0.0):
+        raise NotImplementedError
+
+    def choose_tools(self, messages, tools, *, model, temperature=0.0):
         raise NotImplementedError
 
 

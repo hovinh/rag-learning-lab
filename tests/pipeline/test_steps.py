@@ -65,12 +65,15 @@ class FakeLLMClient(LLMClient):
         self.deltas = deltas
         self.calls: list[tuple[list, str]] = []
 
-    def complete(self, messages, *, model, temperature=0.0):
+    def complete(self, messages, *, model, temperature=0.0, json_mode=False):
         raise NotImplementedError
 
     def stream(self, messages, *, model, temperature=0.0):
         self.calls.append((messages, model))
         yield from self.deltas
+
+    def choose_tools(self, messages, tools, *, model, temperature=0.0):
+        raise NotImplementedError
 
 
 def test_answer_step_builds_prompt_from_prompt_files_and_streams_answer(tmp_path):

@@ -20,32 +20,23 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import logzero
-from constants import DEFAULT_ANSWER_MODEL, LOG_DIR
+from constants import (
+    DEFAULT_ANSWER_MODEL,
+    LOG_DIR,
+    MOVIES_CYPHER_EXAMPLES,
+    MOVIES_TERMINOLOGY,
+)
 from dotenv import load_dotenv
 from logzero import logger
 from openai import OpenAI
 
 from graphrag.datasets import MovieGraphSeeder
-from graphrag.graph import CypherExample, CypherGraphStore, KuzuCypherGraphStore, Text2Cypher
+from graphrag.graph import CypherGraphStore, KuzuCypherGraphStore, Text2Cypher
 from graphrag.llm import OpenAILLMClient
 from graphrag.pipeline import Pipeline
 from graphrag.settings import Settings
 
 QUESTION = "Who directed the most movies?"
-TERMINOLOGY = """
-Persons: When a user asks about a person by trade like actor, writer, director, producer, reviewer, they are referring to a node with the label 'Person'.
-Movies: When a user asks about a film or movie, they are referring to a node with the label Movie.
-"""
-EXAMPLES = [
-    CypherExample(
-        question="Who are the two people acted in most movies together?",
-        cypher=(
-            "MATCH (p1:Person)-[:ACTED_IN]->(m:Movie)<-[:ACTED_IN]-(p2:Person) "
-            "WHERE p1 <> p2 RETURN p1.name, p2.name, COUNT(m) AS movieCount "
-            "ORDER BY movieCount DESC LIMIT 1"
-        ),
-    )
-]
 
 
 @dataclass
@@ -104,7 +95,11 @@ def main(process_name: str) -> None:
         logger.info(f"Schema:\n{schema.to_prompt()}")
 
         text2cypher = Text2Cypher(
-            llm, schema, terminology=TERMINOLOGY, examples=EXAMPLES, model=DEFAULT_ANSWER_MODEL
+            llm,
+            schema,
+            terminology=MOVIES_TERMINOLOGY,
+            examples=MOVIES_CYPHER_EXAMPLES,
+            model=DEFAULT_ANSWER_MODEL,
         )
         pipeline: Pipeline[Ch04Context] = Pipeline(
             [GenerateCypherStep(text2cypher), ExecuteCypherStep(store)]

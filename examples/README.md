@@ -227,3 +227,103 @@ Here everything except the question is fixed in the constructor, so one
 instance can answer many questions, which is how ch05 will reuse it as an
 agent tool. Kuzu ran the book's few-shot query (including
 `WHERE p1 <> p2` on nodes) unchanged, so no dialect workaround was needed.
+
+## Chapter 5 — Agentic RAG
+
+Script: [agentic_rag_movies.py](agentic_rag_movies.py)
+(re-implements `template/kg-rag/notebooks/ch05.ipynb`).
+
+Run from the repo root (requires `OPENAI_API_KEY` in `.env`, see
+`.env.example`):
+
+```
+.venv/Scripts/python.exe examples/agentic_rag_movies.py --process-name ch05_agentic_rag_movies
+```
+
+Ch04 always answers in one way: generate Cypher, then run it. Ch05 puts an
+**agent** in front of that. The LLM decides how to answer each question,
+and checks whether the answer is complete before replying. The script
+seeds the same movies graph as ch04 (its own `_ch05` Kuzu database) and
+asks the book's two questions.
+
+### The flow
+
+[`Agent.run()`](../src/graphrag/agent/agent.py) takes one question through
+four LLM-driven stages, keeping a **history** of the answers gathered so
+far:
+
+1. **Query update**
+   ([`QueryUpdater`](../src/graphrag/agent/query_updater.py)): rewrite the
+   question into one atomic, specific question, filling in references from
+   the history ("that person" → "Keanu Reeves"). The response is a JSON
+   object (`json_mode=True`).
+2. **Tool routing** ([`ToolRouter`](../src/graphrag/agent/router.py)): the
+   LLM is offered every tool's function-calling definition and picks one
+   or more (`LLMClient.choose_tools()`). The router runs them. Results go
+   into the history as an assistant message, *"For the question X, we have
+   the answer Y"*. That's the book's wording, from `agent_tool_answer.txt`.
+3. **Critique** ([`AnswerCritic`](../src/graphrag/agent/critic.py)): does
+   the history fully answer the *original* question? If not, the critic
+   returns follow-up questions. They're joined into one question and go
+   through steps 1–2 **once** more, as in the book. This is a single
+   critique pass, not a loop.
+4. **Final answer**: the LLM answers the original question from the
+   history alone. It's told to say when information is missing rather
+   than make anything up.
+
+### The tools
+
+| Tool (name the LLM sees)                         | What it does                                                                 |
+| ------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `movie_info_by_title` (`MovieInfoByTitleTool`)   | fixed Cypher: movies whose title contains the text, with cast and directors  |
+| `movies_info_by_actor` (`MoviesInfoByActorTool`) | fixed Cypher: the movies an actor is in, with each one's cast and directors  |
+| `text2cypher` (`Text2CypherTool`)                | fallback: ch04's `Text2Cypher` (same terminology and example) plus execution |
+| `respond` (`AnswerGivenTool`)                    | the answer is already in the history, or the user is making small talk       |
+
+The fixed lookups handle the question shapes known in advance. They're
+fast and can't produce invalid Cypher. text2cypher covers everything else,
+e.g. "How many directors and producers are in the database?". If its
+generated Cypher fails, the error text is returned as the tool's result
+instead of being raised, so it becomes part of the history the critic sees.
+
+Every tool subclasses [`Tool`](../src/graphrag/agent/tools.py). One `name`
+serves as both the function name the LLM sees and the router's lookup key.
+To add a tool, subclass `Tool` and pass an instance to `ToolRouter`.
+
+### Where this departs from the book
+
+- **Tool name mismatch.** The book keys its tools dict `"answer_given"`,
+  but the function the LLM sees is named `"respond"`. Whenever the LLM
+  picks that tool, `handle_tool_calls` raises a `KeyError`. Here there's
+  only one name. An unknown tool name or a missing required argument
+  raises `ToolRoutingError`.
+- **`movies_info_by_actor` filters by actor.** The book's query rebinds
+  `a` in an `OPTIONAL MATCH` and attaches its `WHERE` to that optional
+  match, so the actor filter has no effect.
+- **No duplicated names.** Two `OPTIONAL MATCH`es multiply rows, so the
+  book's plain `collect()` repeats every cast member once per director.
+  `collect(DISTINCT ...)` fixes that. The queries also return properties
+  (`title`, `released`, `tagline`) rather than whole nodes.
+- **Kuzu dialect.** `toLower` becomes `lower`, and the `cast` column is
+  backtick-escaped because `cast` is a reserved word in Kuzu.
+- **Fresh history per question.** The book's
+  `handle_user_input(input, answers=[])` has a mutable default argument,
+  so the second question silently sees the first one's answers.
+- **Bad JSON raises.** The book prints "Error decoding JSON" and returns
+  `[]`, even where a question string is expected. Here unusable JSON
+  raises `LLMResponseError`.
+- **Final answer returned whole**, not streamed, so `Agent.run()` returns
+  a plain string.
+
+### What a run looks like
+
+On the first question, the updater names Keanu Reeves, and the router
+calls *both* `movie_info_by_title("The Matrix")` and
+`movies_info_by_actor("Keanu Reeves")` in one turn. The critic still asks
+about his other movies, so a second round runs. The curated dataset only
+has him in *The Matrix* and *The Matrix Reloaded*, so the answer can be
+thin: in test runs the model said his other movies were "missing" instead
+of naming *Reloaded*. The tools returned the right rows; this is the final
+LLM call reading them conservatively. The second question goes to
+`text2cypher`, which returns 10 directors and 4 producers, matching the
+seeded graph. The critic is satisfied, so there's no second round.
