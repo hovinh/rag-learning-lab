@@ -1,0 +1,6 @@
+Use the following documents to answer the question that will follow:
+{context}
+
+---
+
+The question to answer using information only from the above documents: {question}

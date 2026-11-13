@@ -12,3 +12,14 @@ class ChunkMatch:
     index: int
     text: str
     score: float
+
+
+@dataclass(frozen=True)
+class ParentMatch:
+    """A retrieved parent chunk (ch03 parent-child retrieval). ``score`` is
+    always higher-is-better, aggregated from the parent's matching children.
+    """
+
+    index: int
+    text: str
+    score: float

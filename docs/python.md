@@ -48,10 +48,12 @@ Guidelines:
 ```
 src/
   graphrag/
-    ingestion/      # PdfLoader, TextChunker
+    ingestion/      # PdfLoader, TextChunker, SectionSplitter
     llm/             # LLMClient (OpenAI wrapper), QueryRewriter
     graph/           # GraphStore ABC, KuzuGraphStore, Text2Cypher
     retrieval/       # Embedder, VectorIndex
+    prompts/         # PromptRepository + prompt text files
+    pipeline/        # Pipeline runner + steps shared across chapters
     agent/           # ToolRouter, Agent, tool definitions
 tests/
   ...                # mirrors src/graphrag structure

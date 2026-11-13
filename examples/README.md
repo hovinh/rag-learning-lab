@@ -96,3 +96,47 @@ numeric scales,
 divides each result set by its own max score before merging — the same
 normalize-then-union trick the book's original Neo4j `hybrid_query` used
 — then keeps the best normalized score per chunk index.
+
+## Chapter 3 — Step-back prompting and parent-child retrieval
+
+Script: [parent_child_stepback_rag.py](parent_child_stepback_rag.py)
+(re-implements `template/kg-rag/notebooks/ch03.ipynb`).
+
+Run from the repo root (requires `OPENAI_API_KEY` in `.env`, see
+`.env.example`):
+
+```
+.venv/Scripts/python.exe examples/parent_child_stepback_rag.py --process-name ch03_parent_child_stepback_rag
+```
+
+Pipeline: download the same arxiv PDF as ch02 → split it into titled
+sections (`SectionSplitter`) → chunk each section into large "parent"
+chunks and each parent into small "child" chunks (`TextChunker`, run
+twice with different sizes) → embed only the children (`OpenAIEmbedder`)
+→ store the parent/child hierarchy in Kuzu (`KuzuParentChildGraphStore`)
+→ rewrite the question with step-back prompting (`QueryRewriter`) →
+retrieve at parent granularity (`parent_retrieval`) → answer with the
+*original* question using the retrieved parent text as context.
+
+### Why parent-child retrieval
+
+A single 500-character chunk is often too small to carry the full context
+an answer needs — but embedding a large 2000-character chunk directly
+makes similarity search fuzzier (more topics blended into one vector).
+Parent-child retrieval gets both: small, precise child chunks are what
+gets embedded and searched, while the *parent* chunk they came from
+(their surrounding section text) is what's returned to the LLM. See
+[`KuzuParentChildGraphStore.parent_retrieval()`](../src/graphrag/graph/kuzu_parent_child_store.py):
+it vector-searches `Child` nodes, walks each hit's `HAS_CHILD` edge back
+to its `Parent`, and keeps the best (`min` distance) child score per
+parent — mirroring the book's Neo4j `parent_retrieval` Cypher.
+
+### Why step-back prompting
+
+[`QueryRewriter.step_back()`](../src/graphrag/llm/query_rewriter.py) asks
+the LLM to paraphrase a specific question into a more generic one before
+embedding it for retrieval (e.g. "Who was Einstein's collaborator on
+sound reproduction?" → "Who were Einstein's professional associates?").
+The rewritten question is only used to *retrieve* context; the original
+question is still what's sent to the LLM for the final answer, so the
+answer stays scoped to what was actually asked.
