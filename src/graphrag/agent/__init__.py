@@ -2,6 +2,8 @@ from graphrag.agent.agent import Agent, AgentResponse
 from graphrag.agent.critic import AnswerCritic
 from graphrag.agent.errors import ToolRoutingError
 from graphrag.agent.movie_tools import MovieInfoByTitleTool, MoviesInfoByActorTool
+from graphrag.agent.query_decomposer import QueryDecomposer
+from graphrag.agent.query_planner import QueryPlanner
 from graphrag.agent.query_updater import QueryUpdater
 from graphrag.agent.router import ToolRouter
 from graphrag.agent.tools import (
@@ -19,6 +21,8 @@ __all__ = [
     "AnswerGivenTool",
     "MovieInfoByTitleTool",
     "MoviesInfoByActorTool",
+    "QueryDecomposer",
+    "QueryPlanner",
     "QueryUpdater",
     "Text2CypherTool",
     "Tool",

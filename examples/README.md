@@ -110,13 +110,20 @@ Run from the repo root (requires `OPENAI_API_KEY` in `.env`, see
 ```
 
 Pipeline: download the same arxiv PDF as ch02 → split it into titled
-sections (`SectionSplitter`) → chunk each section into large "parent"
+sections (`SectionSplitter`) and log each one's token count
+([`TokenCounter`](../src/graphrag/llm/token_counter.py), tiktoken) → chunk each section into large "parent"
 chunks and each parent into small "child" chunks (`TextChunker`, run
 twice with different sizes) → embed only the children (`OpenAIEmbedder`)
 → store the parent/child hierarchy in Kuzu (`KuzuParentChildGraphStore`)
 → rewrite the question with step-back prompting (`QueryRewriter`) →
 retrieve at parent granularity (`parent_retrieval`) → answer with the
 *original* question using the retrieved parent text as context.
+
+The token counts show why sections are chunked further: the 9 sections
+run from 153 to 4,156 tokens, far too uneven to use as retrieval units as
+they are. `TokenCounter` is the book's `num_tokens_from_string`, but
+defaults to gpt-4o's tokenizer (`o200k_base`) rather than gpt-4's, since
+that's the model called here.
 
 ### Why parent-child retrieval
 
@@ -276,7 +283,10 @@ far:
    ([`QueryUpdater`](../src/graphrag/agent/query_updater.py)): rewrite the
    question into one atomic, specific question, filling in references from
    the history ("that person" → "Keanu Reeves"). The response is a JSON
-   object (`json_mode=True`).
+   object (`json_mode=True`). ch08's agent splits the question into
+   several instead (`QueryDecomposer`, see "Question splitting" in ch08).
+   Both are a [`QueryPlanner`](../src/graphrag/agent/query_planner.py),
+   which is what `Agent` takes.
 2. **Tool routing** ([`ToolRouter`](../src/graphrag/agent/router.py)): the
    LLM is offered every tool's function-calling definition and picks one
    or more (`LLMClient.choose_tools()`). The router runs them. Results go
@@ -502,7 +512,9 @@ a specific entity spread across many passages.
 The corpus is Samuel Butler's translation of Homer's *Odyssey* from
 Project Gutenberg
 ([`OdysseyCorpus`](../src/graphrag/datasets/odyssey.py), cached at
-`data/ch07-odyssey.txt`), split into its 24 books. As in the book, only
+`data/ch07-odyssey.txt`), split into its 24 books, which average about
+6,400 tokens (4,406–10,648; the script logs this with `TokenCounter`, as
+the book does). As in the book, only
 the first is processed by default; `--books N` processes more, at roughly
 100–150 LLM calls per book. The script uses its own `_ch07` Kuzu database,
 reset on every run.
@@ -687,7 +699,8 @@ final `test_data` frame) is also written to
 `logs/<process_name>_results.csv`. Each question takes roughly 5 agent
 calls and 5 judge calls, so `--limit N` evaluates only the first N, and
 `--rescore` re-runs only the judges on saved answers (see "Re-scoring
-saved answers" below).
+saved answers" below). `--decompose` runs the book's ch08 variant of the
+agent, which splits each question first (see "Question splitting" below).
 
 ### The benchmark
 
@@ -914,3 +927,49 @@ only, so it's quicker and cheaper):
 ```
 .venv/Scripts/python.exe examples/evaluate_agent_movies.py --process-name ch08_rescore --rescore logs/ch08_evaluate_agent_movies_samples.json
 ```
+
+### Question splitting (`--decompose`)
+
+The book's ch08 agent isn't quite ch05's. Its `get_answer` (in
+`ch08_tools.py`) replaces ch05's query update with `query_rewrite`, which
+splits the input into standalone atomic questions ("Who is Mick Jagger
+and how old is he?" → "Who is Mick Jagger?", "How old is Mick Jagger?"),
+and routes each one to a tool in its own round, adding one "For the
+question …" answer per question to the history. Here that's
+[`QueryDecomposer`](../src/graphrag/agent/query_decomposer.py). It and
+`QueryUpdater` are both a
+[`QueryPlanner`](../src/graphrag/agent/query_planner.py), which returns the
+questions to route, so `Agent` runs either. `--decompose` evaluates with
+it:
+
+```
+.venv/Scripts/python.exe examples/evaluate_agent_movies.py --process-name ch08_decompose --decompose
+```
+
+Where it departs from the book:
+
+- **It sees the history.** The book's `query_rewrite` gets only the
+  question. Here it also gets the answers so far, as `QueryUpdater` does,
+  so a critic follow-up like "When was he born?" can name who "he" is.
+- **The same guards as the query update.** `agent_query_decompose_system.txt`
+  is the book's prompt plus ch05's tightened rules (fill in names, add no
+  dates, places or narrowing words) and "if it asks one thing, or is small
+  talk, return it unchanged as the only question".
+- **Bad JSON raises.** The book returns `[]`, which routes nothing and
+  answers from an empty history. An empty or non-string list raises
+  `LLMResponseError` too.
+
+A run with `--decompose` scored 0.811 correctness, 1.000 context recall
+and 1.000 faithfulness at 3.8 s, with 0/17 failed: the same as run 7's
+re-scored 0.825 / 1.000 / 1.000, within run-to-run variation. That's
+expected, because none of the 17 benchmark questions is compound: the
+decomposer returned every one as a single question (and the critic asked
+for no follow-ups), so the run only shows that the extra step costs
+nothing. Splitting shows on compound questions. "Who directed Top Gun and
+when was Tom Cruise born?" became two questions, each answered by its own
+tool round (Tony Scott; 1962). It also shows the method's limit: the
+questions are planned before any tool runs, so for ch05's "Who's the main
+actor in the movie Matrix and what other movies is that person in?" the
+second question couldn't name the actor ("What other movies is the actor
+in the movie Matrix in?"). The critic's follow-up round filled that in,
+and the answer named Keanu Reeves and *The Matrix Reloaded*.

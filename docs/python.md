@@ -18,9 +18,9 @@ Each notebook concept becomes a class with a narrow, explicit interface:
 | Book concept                        | Class (indicative)                          |
 | ------------------------------------ | -------------------------------------------- |
 | PDF ingestion, chunking, vector & hybrid search (ch02) | `PdfLoader`, `TextChunker`, `Embedder`, `GraphStore` |
-| Step-back prompting, parent-child retrieval (ch03)     | `QueryRewriter`, `ParentChildGraphStore`             |
+| Step-back prompting, parent-child retrieval (ch03)     | `QueryRewriter`, `ParentChildGraphStore`, `TokenCounter` |
 | text2cypher (ch04)                                     | `Text2Cypher`, `CypherGraphStore`, `MovieGraphSeeder` |
-| Agentic RAG: tool routing, critique loop (ch05)        | `Agent`, `QueryUpdater`, `ToolRouter`, `AnswerCritic`, `Tool` |
+| Agentic RAG: tool routing, critique loop (ch05)        | `Agent`, `QueryPlanner` (`QueryUpdater`, ch08's `QueryDecomposer`), `ToolRouter`, `AnswerCritic`, `Tool` |
 | Structured extraction into a KG (ch06)                 | `Contract` models, `StructuredExtractor`, `ContractGraphImporter` |
 | LLM-driven KG construction, local/global search (ch07) | `EntityRelationshipExtractor`, `EntityGraphImporter`, `DescriptionSummarizer`, `KuzuLouvainCommunityDetector`, `CommunityReporter`, `EntityEmbeddingIndexer`, `GlobalSearch`, `LocalSearch` |
 | RAG evaluation against a benchmark (ch08)              | `BenchmarkRunner`, `Evaluator`, `Metric` (`AnswerCorrectness`, `ContextRecall`, `Faithfulness`), `StatementExtractor` |
@@ -49,14 +49,14 @@ Guidelines:
 src/
   graphrag/
     ingestion/      # PdfLoader, TextChunker, SectionSplitter
-    llm/             # LLMClient (OpenAI wrapper, incl. structured outputs), QueryRewriter
+    llm/             # LLMClient (OpenAI wrapper, incl. structured outputs), QueryRewriter, TokenCounter
     graph/           # GraphStore/CypherGraphStore ABCs, Kuzu stores, Text2Cypher
     datasets/        # sample data (MovieGraphSeeder + its CSVs, ch06's contract text, ch07's OdysseyCorpus,
                      # ch08's movies benchmark)
     retrieval/       # Embedder, EntityEmbeddingIndexer, GlobalSearch, LocalSearch
     prompts/         # PromptRepository + prompt text files
     pipeline/        # Pipeline runner + steps shared across chapters
-    agent/           # Agent, QueryUpdater, ToolRouter, AnswerCritic, Tool subclasses
+    agent/           # Agent, QueryPlanner/QueryUpdater/QueryDecomposer, ToolRouter, AnswerCritic, Tool subclasses
     extraction/      # Pydantic extraction models, StructuredExtractor, ContractGraphImporter,
                      # ch07's entity extraction, summarization, communities and reports
     evaluation/      # ch08: benchmark loading, BenchmarkRunner, LLM-judged Metrics, Evaluator

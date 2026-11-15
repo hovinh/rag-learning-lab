@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from logzero import logger
 
 from graphrag.agent.critic import AnswerCritic
-from graphrag.agent.query_updater import QueryUpdater
+from graphrag.agent.query_planner import QueryPlanner
 from graphrag.agent.router import ToolRouter
 from graphrag.llm.client import LLMClient, Message, OpenAILLMClient
 from graphrag.prompts import PromptRepository
@@ -30,6 +30,11 @@ class Agent:
     its follow-up questions through the same update/route step once --
     then answer from the gathered answers only.
 
+    ``query_planner`` decides which questions get routed: a
+    ``QueryUpdater`` rewrites the question into one (ch05), a
+    ``QueryDecomposer`` splits it into several, each routed in its own
+    tool round (ch08).
+
     Every ``run`` starts from an empty history. The book's
     ``handle_user_input(input, answers=[])`` has a mutable default, so its
     second question silently sees the first one's answers.
@@ -38,7 +43,7 @@ class Agent:
     def __init__(
         self,
         llm: LLMClient,
-        query_updater: QueryUpdater,
+        query_planner: QueryPlanner,
         router: ToolRouter,
         critic: AnswerCritic,
         *,
@@ -46,7 +51,7 @@ class Agent:
         prompts: PromptRepository | None = None,
     ) -> None:
         self._llm = llm
-        self._query_updater = query_updater
+        self._query_planner = query_planner
         self._router = router
         self._critic = critic
         self._model = model
@@ -82,16 +87,21 @@ class Agent:
         return AgentResponse(answer, [message["content"] for message in history])
 
     def _gather(self, question: str, history: list[Message]) -> None:
-        updated = self._query_updater.update(question, history)
-        logger.info(f"Updated question: {updated}")
-        results = self._router.route(updated, history)
-        # default=str: text2cypher can return values JSON has no type for
-        # (e.g. dates).
-        answer = json.dumps(results, default=str)
-        logger.info(f"Tool results: {answer}")
-        history.append(
-            {
-                "role": "assistant",
-                "content": self._tool_answer_template.format(question=updated, answer=answer),
-            }
-        )
+        planned = self._query_planner.plan(question, history)
+        logger.info(f"Planned questions: {planned}")
+        # Each question is routed with the answers so far, including those
+        # to the questions planned before it.
+        for planned_question in planned:
+            results = self._router.route(planned_question, history)
+            # default=str: text2cypher can return values JSON has no type
+            # for (e.g. dates).
+            answer = json.dumps(results, default=str)
+            logger.info(f"Tool results for {planned_question!r}: {answer}")
+            history.append(
+                {
+                    "role": "assistant",
+                    "content": self._tool_answer_template.format(
+                        question=planned_question, answer=answer
+                    ),
+                }
+            )

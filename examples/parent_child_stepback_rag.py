@@ -28,7 +28,7 @@ from openai import OpenAI
 
 from graphrag.graph import KuzuParentChildGraphStore, ParentMatch
 from graphrag.ingestion import PdfLoader, SectionSplitter, TextChunker
-from graphrag.llm import OpenAILLMClient, QueryRewriter
+from graphrag.llm import OpenAILLMClient, QueryRewriter, TokenCounter
 from graphrag.pipeline import AnswerStep, LoadPdfTextStep, Pipeline
 from graphrag.retrieval import Embedder, OpenAIEmbedder
 from graphrag.settings import Settings
@@ -53,12 +53,17 @@ class Ch03Context:
 
 
 class SectionSplitStep:
-    def __init__(self, splitter: SectionSplitter) -> None:
+    def __init__(self, splitter: SectionSplitter, token_counter: TokenCounter) -> None:
         self._splitter = splitter
+        self._token_counter = token_counter
 
     def __call__(self, context: Ch03Context) -> None:
         context.sections = self._splitter.split(context.text)
         logger.info(f"{len(context.sections)} sections")
+        # The book prints these to show why sections are chunked further:
+        # some are far longer than one passage of context should be.
+        tokens = [self._token_counter.count(section) for section in context.sections]
+        logger.info(f"Tokens per section: {tokens}")
 
 
 class ParentChildChunkStep:
@@ -130,7 +135,7 @@ def main(process_name: str) -> None:
     ingestion: Pipeline[Ch03Context] = Pipeline(
         [
             LoadPdfTextStep(PdfLoader(), PDF_URL, PDF_PATH),
-            SectionSplitStep(SectionSplitter()),
+            SectionSplitStep(SectionSplitter(), TokenCounter()),
             ParentChildChunkStep(
                 parent_chunker=TextChunker(chunk_size=PARENT_CHUNK_SIZE, overlap=PARENT_OVERLAP),
                 child_chunker=TextChunker(chunk_size=CHILD_CHUNK_SIZE, overlap=CHILD_OVERLAP),

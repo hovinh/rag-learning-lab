@@ -24,6 +24,12 @@ def test_update_returns_question_from_json_response(llm):
     }
 
 
+def test_plan_is_the_one_updated_question(llm):
+    llm.completions = ['{"question": "Who acted in Top Gun?"}']
+
+    assert QueryUpdater(llm).plan("Who acted in top gun?") == ["Who acted in Top Gun?"]
+
+
 @pytest.mark.parametrize("response", ["not json", '{"q": "x"}', '{"question": ["x"]}'])
 def test_update_rejects_unusable_response(llm, response):
     llm.completions = [response]

@@ -37,7 +37,7 @@ from graphrag.extraction import (
 )
 from graphrag.graph import CypherGraphStore, KuzuCypherGraphStore
 from graphrag.ingestion import TextChunker
-from graphrag.llm import OpenAILLMClient
+from graphrag.llm import OpenAILLMClient, TokenCounter
 from graphrag.pipeline import Pipeline
 from graphrag.retrieval import EntityEmbeddingIndexer, GlobalSearch, LocalSearch, OpenAIEmbedder
 from graphrag.settings import Settings
@@ -69,14 +69,23 @@ class Ch07Context:
 
 
 class LoadBooksStep:
-    def __init__(self, corpus: OdysseyCorpus, number_of_books: int) -> None:
+    def __init__(
+        self, corpus: OdysseyCorpus, number_of_books: int, token_counter: TokenCounter
+    ) -> None:
         self._corpus = corpus
         self._number_of_books = number_of_books
+        self._token_counter = token_counter
 
     def __call__(self, context: Ch07Context) -> None:
         books = self._corpus.load_books()
         context.books = books[: self._number_of_books]
         logger.info(f"Loaded {len(books)} books; processing {len(context.books)}")
+        # As in the book: how big the books are, before chunking.
+        tokens = [self._token_counter.count(book) for book in books]
+        logger.info(
+            f"Tokens per book: avg {sum(tokens) / len(tokens):.0f}, "
+            f"min {min(tokens)}, max {max(tokens)}"
+        )
 
 
 class ChunkBooksStep:
@@ -199,7 +208,7 @@ def main(process_name: str, number_of_books: int) -> None:
 
         pipeline: Pipeline[Ch07Context] = Pipeline(
             [
-                LoadBooksStep(OdysseyCorpus(ODYSSEY_PATH), number_of_books),
+                LoadBooksStep(OdysseyCorpus(ODYSSEY_PATH), number_of_books, TokenCounter()),
                 ChunkBooksStep(TextChunker(CHUNK_SIZE, CHUNK_OVERLAP)),
                 ExtractGraphStep(
                     EntityRelationshipExtractor(llm, ENTITY_TYPES, model=DEFAULT_ANSWER_MODEL),

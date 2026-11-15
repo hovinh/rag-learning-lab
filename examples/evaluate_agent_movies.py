@@ -8,6 +8,8 @@ See examples/README.md for the metrics and where this departs from the
 book. Requires OPENAI_API_KEY in .env (see .env.example). Every question
 costs several agent and judge calls, so --limit runs only the first N.
 Answered samples are saved, and --rescore re-runs only the judges on them.
+--decompose splits each question into atomic questions first, as the
+book's ch08 agent does.
 Run from the repo root:
 
     .venv/Scripts/python.exe examples/evaluate_agent_movies.py \\
@@ -47,7 +49,7 @@ from graphrag.retrieval import OpenAIEmbedder
 from graphrag.settings import Settings
 
 
-def main(process_name: str, limit: int | None, rescore: Path | None) -> None:
+def main(process_name: str, limit: int | None, rescore: Path | None, decompose: bool) -> None:
     # Windows defaults stdout/the log file to the cp1252 codepage, which
     # can't encode some names in the movies dataset (e.g. "Miloš Forman");
     # force UTF-8 so those log lines don't get silently dropped.
@@ -75,7 +77,7 @@ def main(process_name: str, limit: int | None, rescore: Path | None) -> None:
         db_path = settings.kuzu_db_path.with_name(f"{settings.kuzu_db_path.name}_ch08")
         with KuzuCypherGraphStore(db_path) as store:
             MovieGraphSeeder(store).seed()
-            agent = build_movie_agent(llm, store)
+            agent = build_movie_agent(llm, store, decompose=decompose)
             samples = BenchmarkRunner(store, agent.respond).run(cases)
         samples_path = LOG_DIR / f"{process_name}_samples.json"
         save_samples(samples, samples_path)
@@ -158,5 +160,15 @@ if __name__ == "__main__":
             "earlier run wrote (logs/<process_name>_samples.json)."
         ),
     )
+    parser.add_argument(
+        "--decompose",
+        action="store_true",
+        help=(
+            "Split each question into atomic questions, each routed to a tool on "
+            "its own (the book's ch08 agent), instead of ch05's one rewritten question."
+        ),
+    )
     args = parser.parse_args()
-    main(args.process_name, args.limit, args.rescore)
+    if args.rescore is not None and args.decompose:
+        parser.error("--decompose has no effect with --rescore, which doesn't run the agent")
+    main(args.process_name, args.limit, args.rescore, args.decompose)

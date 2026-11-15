@@ -2,6 +2,7 @@ from graphrag.llm.client import LLMClient, Message, OpenAILLMClient, ToolCall, T
 from graphrag.llm.errors import LLMResponseError
 from graphrag.llm.json_response import load_json_field, load_json_object
 from graphrag.llm.query_rewriter import QueryRewriter
+from graphrag.llm.token_counter import TokenCounter
 
 __all__ = [
     "LLMClient",
@@ -9,6 +10,7 @@ __all__ = [
     "Message",
     "OpenAILLMClient",
     "QueryRewriter",
+    "TokenCounter",
     "ToolCall",
     "ToolDefinition",
     "load_json_field",

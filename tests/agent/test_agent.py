@@ -1,5 +1,6 @@
 from graphrag.agent.agent import Agent
 from graphrag.agent.critic import AnswerCritic
+from graphrag.agent.query_decomposer import QueryDecomposer
 from graphrag.agent.query_updater import QueryUpdater
 from graphrag.agent.router import ToolRouter
 from graphrag.agent.tools import AnswerGivenTool, Tool, string_parameters
@@ -15,9 +16,10 @@ class MovieLookupTool(Tool):
         return [{"title": arguments["title"], "cast": ["Keanu Reeves"]}]
 
 
-def make_agent(llm):
+def make_agent(llm, query_planner=None):
     router = ToolRouter(llm, [MovieLookupTool(), AnswerGivenTool()])
-    return Agent(llm, QueryUpdater(llm), router, AnswerCritic(llm), model="test-model")
+    query_planner = query_planner or QueryUpdater(llm)
+    return Agent(llm, query_planner, router, AnswerCritic(llm), model="test-model")
 
 
 def test_run_answers_directly_when_critic_is_satisfied(llm):
@@ -116,3 +118,37 @@ def test_run_starts_each_question_with_empty_history(llm):
 
     second_run_final = llm.complete_calls[-1]["messages"]
     assert len(second_run_final) == 3
+
+
+def test_decomposed_questions_each_get_a_tool_round(llm):
+    llm.completions = [
+        '{"questions": ["Who acted in The Matrix?", "When was Keanu Reeves born?"]}',
+        '{"questions": []}',
+        "Keanu Reeves, born 1964.",
+    ]
+    llm.tool_calls = [
+        [ToolCall("movie_info_by_title", {"title": "The Matrix"})],
+        [ToolCall("respond", {"answer": "1964"})],
+    ]
+
+    response = make_agent(llm, QueryDecomposer(llm)).respond(
+        "Who acted in The Matrix and when was Keanu Reeves born?"
+    )
+
+    assert response.answer == "Keanu Reeves, born 1964."
+    first_route, second_route = llm.choose_tools_calls
+    assert first_route["messages"][-1]["content"] == (
+        "The user question to find a tool to answer: 'Who acted in The Matrix?'"
+    )
+    # The second question is routed with the first one's answer.
+    assert second_route["messages"][1]["content"] == response.contexts[0]
+    assert second_route["messages"][-1]["content"] == (
+        "The user question to find a tool to answer: 'When was Keanu Reeves born?'"
+    )
+    assert response.contexts == [
+        (
+            "For the question: 'Who acted in The Matrix?', we have the answer: "
+            '\'[[{"title": "The Matrix", "cast": ["Keanu Reeves"]}]]\''
+        ),
+        "For the question: 'When was Keanu Reeves born?', we have the answer: '[\"1964\"]'",
+    ]
