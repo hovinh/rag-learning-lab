@@ -1,0 +1,8 @@
+Correction:
+This Cypher statement was generated for the question above, but the database rejected it:
+{cypher}
+
+Error:
+{error}
+
+Generate a corrected Cypher statement, following the same instructions.

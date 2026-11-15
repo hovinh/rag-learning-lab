@@ -209,8 +209,20 @@ from the book's sections, each loaded from a `text2cypher_*.txt` file in
 
 1. **Instructions and format rules**: write only Cypher, with no
    explanation and no code fences, so the output can be executed as-is.
-   One line is added to the book's wording: the target is Kuzu, so the LLM
-   sticks to Cypher that Kuzu supports.
+   Added to the book's wording (all prompted by ch08's benchmark runs):
+   - the target is Kuzu, with the dialect differences the LLM actually
+     got wrong: `size()`, not `length()`, for string length (Kuzu's
+     `length()` only takes paths), and `lower()`/`upper()`, not
+     `toLower()`/`toUpper()`;
+   - when the schema has no data of the kind asked for, return
+     `RETURN "The database has no information about …" AS
+     missing_information` instead of passing off another property as it
+     (asked about Oscars, the book's prompt returned `votes` aliased as
+     `oscarCount`). It's still Cypher, so it runs like any other query;
+   - what relationship types express counts as data (a `DIRECTED` pattern
+     means directors exist, with no `Director` label), and counting or
+     filtering what exists always gets a query. Without this, "How many
+     directors and producers are in the database?" was refused.
 2. **Schema**: the labels, properties, and relationship patterns above,
    with an instruction to use nothing else. This is the main defence
    against invented relationship types or properties.
@@ -227,6 +239,14 @@ Here everything except the question is fixed in the constructor, so one
 instance can answer many questions, which is how ch05 will reuse it as an
 agent tool. Kuzu ran the book's few-shot query (including
 `WHERE p1 <> p2` on nodes) unchanged, so no dialect workaround was needed.
+A second example (not the book's) shows the missing-information reply:
+"Which movie had the biggest budget?", deliberately not a benchmark
+question.
+
+[`Text2Cypher.correct()`](../src/graphrag/graph/text2cypher.py) sends the
+same prompt plus a rejected query and the database's error
+(`text2cypher_correction.txt`) and asks for a corrected query. The book
+has no such step; ch05's text2cypher tool uses it.
 
 ## Chapter 5 — Agentic RAG
 
@@ -325,6 +345,11 @@ To add a tool, subclass `Tool` and pass an instance to `ToolRouter`.
   `data_description` (here `GraphSchema.to_prompt()`, the text text2cypher
   also gets), so it asks only follow-ups the data can answer. See the ch08
   runs for the effect.
+- **text2cypher gets one correction.** When the database rejects a
+  generated query, `Text2CypherTool` passes the error to
+  `Text2Cypher.correct()` and runs the corrected query
+  (`max_corrections=1`; `0` restores the book's behaviour). If that fails
+  too, the error text goes back to the agent as before.
 - **Final answer returned whole**, not streamed, so `Agent.run()` returns
   a plain string.
 
@@ -740,7 +765,7 @@ the answer is right, but not because of what was retrieved.
 
 ### What a run looks like
 
-Three full runs (gpt-4o for the agent and the judges, 3–4 minutes each)
+Five full runs (gpt-4o for the agent and the judges, 3–4 minutes each)
 track the fixes this chapter's evaluation led to. LLMs aren't
 deterministic, so expect a few points of variation between runs of the
 same code.
@@ -750,8 +775,11 @@ same code.
 | 1 | — | 0.521 | 0.781 | 1.000 | 6.1 s | 1/17 |
 | 2 | critic reads a bare `{}` as "no follow-ups" | 0.537 | 0.794 | 0.955 | 5.6 s | 0/17 |
 | 3 | query-update and critic prompts tightened; critic sees the schema | 0.651 | 0.912 | 1.000 | 4.6 s | 0/17 |
+| 4 | text2cypher: Kuzu hints, missing-information reply, one correction | 0.665 | 0.971 | 0.885 | 4.1 s | 0/17 |
+| 5 | text2cypher: relationships count as data | 0.706 | 0.912 | 1.000 | 3.9 s | 0/17 |
 
-What each run showed:
+In run 5 every question about the graph was answered correctly, and so
+was the unanswerable one. What each step showed:
 
 - **Run 1: a critic reply crashed one question.** For "Who acted in top
   gun?" the critic answered `{}` instead of `{"questions": []}`, and
@@ -768,33 +796,49 @@ What each run showed:
   2023?"). On "Who acted in the most movies?" the first tool call had
   returned Tom Hanks with 8 movies, but after six such follow-ups the
   final answer said the information was missing (correctness 0.03–0.09).
-- **Run 3: the fix.** The updater's prompt now forbids adding dates,
-  sources, places, characters or narrowing words, and keeps a question as
-  it is when previous answers don't help. The critic's prompt rules out
-  follow-ups about completeness or criteria the user didn't mention, and
+- **Run 3: no more invented conditions.** The updater's prompt now
+  forbids adding dates, sources, places, characters or narrowing words,
+  and keeps a question as it is when previous answers don't help. The
+  critic's prompt rules out follow-ups about completeness or criteria the
+  user didn't mention, and
   `AnswerCritic(data_description=schema.to_prompt())` shows it what data
-  exists. Rewrites are now minor ("Who acted in top gun?" → "Who acted in
+  exists. Rewrites became minor ("Who acted in top gun?" → "Who acted in
   Top Gun?"). "Who acted in the most movies?" (0.91) and "titles starting
-  with 'The'" (0.93) went from wrong to right, and the critic asked
-  follow-ups for only 3 questions.
-- **Lookups score well throughout.** Top Gun, The Matrix, Tom Hanks's
-  movies, the "more than 5000 votes" filter and "born before 1940" scored
-  around 0.9 correctness with full context recall in every run.
-- **The judge is literal.** In run 2, "Who was born in 1965 and has
-  directed a movie?" got 0.5 faithfulness: the generated Cypher filtered
-  on the birth year without returning it, so "born in 1965" wasn't in the
-  context. "How many movies did Tom Hanks appear in?" scored 0.11–0.14
-  correctness in all three runs although the answer, 8, was right: the
-  judge didn't match the answer's statements to the one-row ground truth's.
+  with 'The'" (0.93) went from wrong to right.
+- **Runs 1–3: text2cypher had two problems.** For "Who has the longest
+  name among all actors?" it wrote Neo4j's `ORDER BY length(p.name)`, which
+  Kuzu rejects (its `length()` only takes paths), in every run. For "Which
+  movie has the most Oscars?" it returned the `votes` column aliased as
+  `maxVotes`, `awards` and `oscarCount` in turn. In runs 1–2 the final
+  answer still said the information was missing; in run 3 it reported "an
+  Oscar count of 6200", adding that the number "seems incorrect".
+- **Run 4: text2cypher fixed, with one over-refusal.** With the Kuzu hints
+  it wrote `size(p.name)` first time, and for the Oscars it returned
+  `missing_information`. But in ch05's example it also refused "How many
+  directors and producers are in the database?": the schema has no
+  `Director` label, so it decided the data didn't exist. Run 5's prompt
+  says that relationship types count as data, and the counts came back
+  (10 and 4). The one-correction retry never triggered in runs 4–5,
+  because the hints avoided the error in the first place; its unit tests
+  cover it.
+- **The judge is literal.** "Who was born in 1965 and has directed a
+  movie?" got 0.5 context recall in every run (and faithfulness in two): the
+  generated Cypher filters on the birth year without returning it, so
+  "born in 1965" isn't in the context. "How many movies did Tom Hanks
+  appear in?" scored 0.09–0.14 correctness in every run although the
+  answer, 8, was right: the judge didn't match the answer's statements to
+  the one-row ground truth's. Run 4's faithfulness dip is the same kind of
+  noise: it gave 0 to "Tom Hanks, with 8 movies", which was exactly what
+  the tool had returned.
 - **Correct refusals score low on correctness.** A refusal ("the
-  information … is missing") or small-talk reply yields no factual
+  information is missing") or small-talk reply yields no factual
   statements, so F1 is 0 and only the 0.25-weighted similarity is left
-  (0.04–0.46). RAGAS behaves the same way, so for those rows, look at the
+  (0.04–0.61). RAGAS behaves the same way, so for those rows, look at the
   answer itself to see whether it behaved as described.
-- **Still open: text2cypher.** It never found the longest actor name
-  (zero context recall in every run). In run 3 it answered "Which movie
-  has the most Oscars?" by returning the `votes` column aliased as
-  `oscarCount`, so the final answer reported "an Oscar count of 6200",
-  though it added that the number "seems incorrect". Runs 1–2 correctly
-  said the information was missing. Making text2cypher refuse questions
-  the schema can't answer is the next thing this benchmark points at.
+- **Still open: an overly cautious final answer.** Sometimes the final
+  answer says information is missing when the tool results contain it. In
+  run 4 the longest-name query returned "Michael Clarke Duncan" and the
+  answer still said it was missing. In ch05's example, *The Matrix
+  Reloaded* is often not offered as Keanu Reeves's "other movie" (see
+  ch05). That's the book's final-answer prompt (`agent_main_system.txt`),
+  which no change here touched.

@@ -24,5 +24,13 @@ MOVIES_CYPHER_EXAMPLES = [
             "WHERE p1 <> p2 RETURN p1.name, p2.name, COUNT(m) AS movieCount "
             "ORDER BY movieCount DESC LIMIT 1"
         ),
-    )
+    ),
+    # Not in the book: shows the "missing information" reply the
+    # instructions ask for, so the LLM doesn't pass off another property
+    # (e.g. votes) as the data asked about. Deliberately not a benchmark
+    # question.
+    CypherExample(
+        question="Which movie had the biggest budget?",
+        cypher='RETURN "The database has no information about budgets" AS missing_information',
+    ),
 ]

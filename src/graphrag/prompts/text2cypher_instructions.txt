@@ -1,6 +1,14 @@
 Instructions:
 Generate Cypher statement to query a graph database to get the data to answer the user question below.
-The graph database is Kuzu, so only use Cypher syntax and functions that Kuzu supports.
+The graph database is Kuzu, so only use Cypher syntax and functions that Kuzu supports. In particular:
+- Use size() for the length of a string or a list; length() only works on paths.
+- Use lower() and upper(), not toLower() and toUpper().
+
+If the question asks for a kind of data that no node label, relationship type or property in the schema holds, do not substitute another property for it, and never alias a property as something it isn't.
+Only in that case, respond with a statement that returns what is missing:
+RETURN "The database has no information about <the missing data>" AS missing_information
+Data the schema holds includes what its relationship types express: for example, a (:Person)-[:DIRECTED]->(:Movie) pattern means directors are in the database, even without a Director label.
+Counting, aggregating, sorting, filtering or combining data the schema does hold is always possible: write the query for it.
 
 Format instructions:
 Do not include any explanations or apologies in your responses.

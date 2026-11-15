@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from typing import Any, ClassVar
 
+from logzero import logger
+
 from graphrag.graph.cypher_store import CypherGraphStore
 from graphrag.graph.errors import GraphQueryError
 from graphrag.graph.text2cypher import Text2Cypher
@@ -73,7 +75,9 @@ class AnswerGivenTool(Tool):
 
 class Text2CypherTool(Tool):
     """The router's fallback: generate Cypher for the question (ch04's
-    ``Text2Cypher``) and run it.
+    ``Text2Cypher``) and run it. If the database rejects the query, the
+    error goes back to ``Text2Cypher.correct`` up to ``max_corrections``
+    times (the book runs the first query only).
     """
 
     name = "text2cypher"
@@ -83,15 +87,28 @@ class Text2CypherTool(Tool):
     )
     parameters = string_parameters("question", "The user question to find the answer for")
 
-    def __init__(self, text2cypher: Text2Cypher, store: CypherGraphStore) -> None:
+    def __init__(
+        self, text2cypher: Text2Cypher, store: CypherGraphStore, *, max_corrections: int = 1
+    ) -> None:
+        if max_corrections < 0:
+            raise ValueError("max_corrections can't be negative")
         self._text2cypher = text2cypher
         self._store = store
+        self._max_corrections = max_corrections
 
     def run(self, arguments: Mapping[str, Any]) -> ToolResult:
-        cypher = self._text2cypher.generate(str(arguments["question"]))
-        try:
-            return self._store.query(cypher)
-        except GraphQueryError as exc:
-            # Returned rather than raised, as in the book: the error becomes
-            # part of the conversation, so the critique step can ask again.
-            return f"{cypher} caused an error: {exc}"
+        question = str(arguments["question"])
+        cypher = self._text2cypher.generate(question)
+        corrections = 0
+        while True:
+            try:
+                return self._store.query(cypher)
+            except GraphQueryError as exc:
+                if corrections == self._max_corrections:
+                    # Returned rather than raised, as in the book: the error
+                    # becomes part of the conversation, so the critique step
+                    # can ask again.
+                    return f"{cypher} caused an error: {exc}"
+                logger.info(f"Correcting rejected Cypher: {cypher} ({exc})")
+                cypher = self._text2cypher.correct(question, cypher, str(exc))
+                corrections += 1

@@ -1,15 +1,28 @@
+import pytest
+
 from graphrag.agent.tools import AnswerGivenTool, Text2CypherTool, string_parameters
 from graphrag.graph.errors import GraphQueryError
+from graphrag.graph.kuzu_cypher_store import KuzuCypherGraphStore
 
 
 class FakeText2Cypher:
-    def __init__(self, cypher: str) -> None:
+    """Generates ``cypher``, then hands out ``corrected`` queries in order,
+    recording each ``correct`` call.
+    """
+
+    def __init__(self, cypher: str, corrected: list[str] | None = None) -> None:
         self.cypher = cypher
+        self.corrected = corrected or []
         self.questions: list[str] = []
+        self.corrections: list[tuple[str, str, str]] = []
 
     def generate(self, question):
         self.questions.append(question)
         return self.cypher
+
+    def correct(self, question, cypher, error):
+        self.corrections.append((question, cypher, error))
+        return self.corrected.pop(0)
 
 
 class FakeCypherStore:
@@ -66,10 +79,47 @@ def test_text2cypher_tool_runs_generated_cypher():
     assert store.queries == ["MATCH (p:Person) RETURN count(p) AS n"]
 
 
-def test_text2cypher_tool_returns_query_errors_as_text():
+def test_text2cypher_tool_returns_query_errors_as_text_without_corrections():
     t2c = FakeText2Cypher("MATCH (n:Nope) RETURN n")
     store = FakeCypherStore(error="Table Nope does not exist.")
 
-    result = Text2CypherTool(t2c, store).run({"question": "?"})
+    result = Text2CypherTool(t2c, store, max_corrections=0).run({"question": "?"})
 
     assert result == "MATCH (n:Nope) RETURN n caused an error: Table Nope does not exist."
+    assert t2c.corrections == []
+
+
+def test_text2cypher_tool_returns_the_last_error_when_the_correction_fails_too():
+    t2c = FakeText2Cypher("MATCH (n:Nope) RETURN n", corrected=["MATCH (n:Still) RETURN n"])
+    store = FakeCypherStore(error="Table does not exist.")
+
+    result = Text2CypherTool(t2c, store).run({"question": "?"})
+
+    assert result == "MATCH (n:Still) RETURN n caused an error: Table does not exist."
+    assert t2c.corrections == [("?", "MATCH (n:Nope) RETURN n", "Table does not exist.")]
+    assert store.queries == ["MATCH (n:Nope) RETURN n", "MATCH (n:Still) RETURN n"]
+
+
+def test_text2cypher_tool_rejects_negative_corrections():
+    with pytest.raises(ValueError):
+        Text2CypherTool(FakeText2Cypher(""), FakeCypherStore(), max_corrections=-1)
+
+
+def test_text2cypher_tool_corrects_a_query_kuzu_rejects(tmp_path):
+    question = "Who has the longest name?"
+    t2c = FakeText2Cypher(
+        "MATCH (p:Person) RETURN p.name AS name ORDER BY length(p.name) DESC LIMIT 1",
+        corrected=["MATCH (p:Person) RETURN p.name AS name ORDER BY size(p.name) DESC LIMIT 1"],
+    )
+    with KuzuCypherGraphStore(tmp_path / "test_kuzu_db") as store:
+        store.query("CREATE NODE TABLE Person(name STRING, PRIMARY KEY(name))")
+        store.query(
+            "CREATE (:Person {name: 'Tom Hanks'}), (:Person {name: 'Michael Clarke Duncan'})"
+        )
+
+        result = Text2CypherTool(t2c, store).run({"question": question})
+
+    assert result == [{"name": "Michael Clarke Duncan"}]
+    [(asked, rejected, error)] = t2c.corrections
+    assert (asked, rejected) == (question, t2c.cypher)
+    assert "length" in error.lower()

@@ -39,6 +39,7 @@ def prompts(tmp_path):
         "text2cypher_terminology.txt": "TERMS:\n{terminology}",
         "text2cypher_examples.txt": "EXAMPLES:\n{examples}",
         "text2cypher_question.txt": "Q: {question}",
+        "text2cypher_correction.txt": "FIX:\n{cypher}\nERROR: {error}",
     }.items():
         (tmp_path / name).write_text(text, encoding="utf-8")
     return PromptRepository(tmp_path)
@@ -92,9 +93,36 @@ def test_generate_sends_prompt_as_user_message_and_strips_output(prompts):
     assert messages == [{"role": "user", "content": t2c.build_prompt("List people")}]
 
 
+def test_correct_appends_the_rejected_query_and_error_to_the_prompt(prompts):
+    llm = FakeLLMClient(" MATCH (p:Person) RETURN size(p.name)\n")
+    t2c = Text2Cypher(llm, SCHEMA, model="gpt-4o-mini", prompts=prompts)
+
+    cypher = t2c.correct("Longest name?", "RETURN length(p.name)", "Binder exception")
+
+    assert cypher == "MATCH (p:Person) RETURN size(p.name)"
+    [(messages, model)] = llm.calls
+    assert model == "gpt-4o-mini"
+    assert messages == [
+        {
+            "role": "user",
+            "content": (
+                f"{t2c.build_prompt('Longest name?')}\n\n"
+                "FIX:\nRETURN length(p.name)\nERROR: Binder exception"
+            ),
+        }
+    ]
+
+
 def test_default_prompts_mention_kuzu_and_contain_schema():
     prompt = Text2Cypher(FakeLLMClient(""), SCHEMA).build_prompt("List people")
 
     assert "Kuzu" in prompt
     assert SCHEMA.to_prompt() in prompt
     assert prompt.endswith("User question: List people")
+
+
+def test_default_prompts_give_kuzu_hints_and_a_missing_information_reply():
+    prompt = Text2Cypher(FakeLLMClient(""), SCHEMA).build_prompt("List people")
+
+    assert "Use size() for the length of a string" in prompt
+    assert "AS missing_information" in prompt

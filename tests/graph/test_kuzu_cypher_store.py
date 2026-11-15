@@ -37,6 +37,15 @@ def test_query_binds_params(store):
     assert rows == [{"name": "Tom Hanks"}]
 
 
+def test_string_length_is_size_not_length(store):
+    # text2cypher's Kuzu hints rely on this: Neo4j's length(string) is
+    # rejected, size() works.
+    [row] = store.query("MATCH (p:Person) RETURN size(p.name) AS n")
+    assert row == {"n": 9}
+    with pytest.raises(GraphQueryError):
+        store.query("MATCH (p:Person) RETURN length(p.name) AS n")
+
+
 def test_query_wraps_database_errors(store):
     with pytest.raises(GraphQueryError, match="MATCH \\(n:Nope\\)"):
         store.query("MATCH (n:Nope) RETURN n")
