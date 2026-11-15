@@ -27,6 +27,27 @@ def test_critique_returns_empty_list_when_answered(llm):
     assert AnswerCritic(llm).critique("?", []) == []
 
 
+def test_critique_tells_the_llm_what_data_exists(llm):
+    llm.completions = ['{"questions": []}']
+    schema = "Node properties:\nMovie {title: STRING}"
+
+    AnswerCritic(llm, data_description=f"{schema}\n").critique("?", [])
+
+    system = llm.complete_calls[0]["messages"][0]["content"]
+    assert f"The answers come from a database with this schema:\n{schema}\n\n" in system
+    assert "Only ask follow-up questions that this data can answer." in system
+
+
+def test_critique_without_data_description_leaves_the_schema_out(llm):
+    llm.completions = ['{"questions": []}']
+
+    AnswerCritic(llm).critique("?", [])
+
+    system = llm.complete_calls[0]["messages"][0]["content"]
+    assert "schema" not in system
+    assert system.endswith('"questions": ["question1", "question2"]\n}')
+
+
 def test_critique_treats_empty_object_as_answered(llm):
     llm.completions = ["{}"]
 

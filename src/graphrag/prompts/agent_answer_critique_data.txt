@@ -1,0 +1,5 @@
+The answers come from a database with this schema:
+{data_description}
+
+Only ask follow-up questions that this data can answer.
+If part of the question needs information the database doesn't hold, don't ask for it: the final answer will say that it's missing.

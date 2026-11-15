@@ -21,12 +21,13 @@ from graphrag.llm import LLMClient
 
 
 def build_movie_agent(llm: LLMClient, store: CypherGraphStore) -> Agent:
-    """``store`` must already hold the movies graph: the text2cypher tool
-    reads its schema here.
+    """``store`` must already hold the movies graph: its schema is read
+    here, for the text2cypher tool and for the critic.
     """
+    schema = store.get_schema()
     text2cypher = Text2Cypher(
         llm,
-        store.get_schema(),
+        schema,
         terminology=MOVIES_TERMINOLOGY,
         examples=MOVIES_CYPHER_EXAMPLES,
         model=DEFAULT_ANSWER_MODEL,
@@ -41,6 +42,6 @@ def build_movie_agent(llm: LLMClient, store: CypherGraphStore) -> Agent:
         llm,
         QueryUpdater(llm, model=DEFAULT_ANSWER_MODEL),
         ToolRouter(llm, tools, model=DEFAULT_ANSWER_MODEL),
-        AnswerCritic(llm, model=DEFAULT_ANSWER_MODEL),
+        AnswerCritic(llm, data_description=schema.to_prompt(), model=DEFAULT_ANSWER_MODEL),
         model=DEFAULT_ANSWER_MODEL,
     )

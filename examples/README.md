@@ -314,6 +314,17 @@ To add a tool, subclass `Tool` and pass an instance to `ToolRouter`.
   raises `LLMResponseError`. The one exception is the critic answering a
   bare `{}`, which LLMs sometimes do for "nothing missing": that's read as
   no follow-up questions (ch08's benchmark run turned this up).
+- **Tighter query-update and critique prompts.** ch08's benchmark showed
+  the book's prompts inventing conditions ("…as of 2023?", "…released in
+  2023…") and follow-ups no movies database could answer (genres, regions,
+  "is this list comprehensive?"). The query updater is now told to fill in
+  only what previous answers say and add nothing else. The critic is told
+  not to ask about completeness or criteria the user didn't mention, and
+  gets the book's ch08 line that small talk needs no follow-ups.
+- **The critic sees the schema.** `AnswerCritic` takes an optional
+  `data_description` (here `GraphSchema.to_prompt()`, the text text2cypher
+  also gets), so it asks only follow-ups the data can answer. See the ch08
+  runs for the effect.
 - **Final answer returned whole**, not streamed, so `Agent.run()` returns
   a plain string.
 
@@ -729,43 +740,61 @@ the answer is right, but not because of what was retrieved.
 
 ### What a run looks like
 
-A full run (gpt-4o for the agent and the judges, about 3.5 minutes)
-scored mean answer correctness 0.521, context recall 0.781 and
-faithfulness 1.000, at 6.1 s per question, with 1 of 17 questions failed.
-Faithfulness was perfect: the agent never stated anything its tools
-hadn't returned. The other two scores, and the per-question rows, show
-where it falls short. LLM judges aren't deterministic, so expect a few
-points of variation between runs.
+Three full runs (gpt-4o for the agent and the judges, 3–4 minutes each)
+track the fixes this chapter's evaluation led to. LLMs aren't
+deterministic, so expect a few points of variation between runs of the
+same code.
 
-A second run, after the critic fix below, scored 0.537 / 0.794 / 0.955
-at 5.6 s per question, with no failed questions. "Who acted in top gun?"
-now scores like its capitalised twin (0.90). The faithfulness drop is the
-judge being literal: for "Who was born in 1965 and has directed a
-movie?" the generated Cypher filtered on the birth year without returning
-it, so "born in 1965" wasn't in the context and that statement was marked
-unsupported. Every weakness below showed up in both runs.
+| Run | Change since the previous run | Correctness | Context recall | Faithfulness | Latency | Failed |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | — | 0.521 | 0.781 | 1.000 | 6.1 s | 1/17 |
+| 2 | critic reads a bare `{}` as "no follow-ups" | 0.537 | 0.794 | 0.955 | 5.6 s | 0/17 |
+| 3 | query-update and critic prompts tightened; critic sees the schema | 0.651 | 0.912 | 1.000 | 4.6 s | 0/17 |
 
-- **Lookups score well.** Top Gun, The Matrix, Tom Hanks's movies, the
-  "more than 5000 votes" filter and "born before 1940" all scored around
-  0.9 correctness with full context recall.
-- **The query updater invents constraints.** It rewrote "In which movies
-  did Tom Hanks act in?" to "…between 1980 and 1990?" and "Who acted in
-  the most movies?" to "…as of 2023?". The first still found the films.
-  On the second, the critic asked six follow-ups (genre, region, cameos…),
-  and the final answer said the information was missing, even though the
-  first tool call had returned Tom Hanks with 8 movies (correctness 0.09).
-- **text2cypher misses** gave the "longest name" and "title starting with
-  'The'" questions zero context recall, and the agent correctly said it
-  didn't know.
-- **The one failure was the critic.** For "Who acted in top gun?" it
-  answered `{}` instead of `{"questions": []}`, and `AnswerCritic` raised
-  `LLMResponseError`. The runner recorded the failure and moved on. Since
-  then, `AnswerCritic` reads a bare `{}` as "no follow-ups", and its
-  prompt spells out the empty reply.
-- **Correct refusals score low on correctness.** "Which movie has the
-  most Oscars?" was answered with "the information … is missing", which
-  is the expected behaviour, but it scored 0.08. The same happened to the
-  small-talk rows (0.04–0.43). A refusal yields no statements, so F1 is 0
-  and only the 0.25-weighted similarity is left. RAGAS behaves the same
-  way, so those rows' correctness should be read as "behaved as described"
-  or not by looking at the answer itself.
+What each run showed:
+
+- **Run 1: a critic reply crashed one question.** For "Who acted in top
+  gun?" the critic answered `{}` instead of `{"questions": []}`, and
+  `AnswerCritic` raised `LLMResponseError`. The runner recorded the
+  failure and moved on. `AnswerCritic` now reads `{}` as no follow-ups,
+  and its prompt spells out the empty reply.
+- **Runs 1–2: the agent invented conditions.** The query updater turned
+  12 of the 17 questions into something nobody asked: "How many movies
+  are there?" became "…released worldwide as of 2023?", "List the movies
+  with a title starting with 'The'" became "…released in 2023…", and
+  "Who played in the Matrix?" became "Who played the character Neo…?".
+  The critic then asked follow-ups no movies database could answer
+  (genres, regions, cameos, "is this list comprehensive up to October
+  2023?"). On "Who acted in the most movies?" the first tool call had
+  returned Tom Hanks with 8 movies, but after six such follow-ups the
+  final answer said the information was missing (correctness 0.03–0.09).
+- **Run 3: the fix.** The updater's prompt now forbids adding dates,
+  sources, places, characters or narrowing words, and keeps a question as
+  it is when previous answers don't help. The critic's prompt rules out
+  follow-ups about completeness or criteria the user didn't mention, and
+  `AnswerCritic(data_description=schema.to_prompt())` shows it what data
+  exists. Rewrites are now minor ("Who acted in top gun?" → "Who acted in
+  Top Gun?"). "Who acted in the most movies?" (0.91) and "titles starting
+  with 'The'" (0.93) went from wrong to right, and the critic asked
+  follow-ups for only 3 questions.
+- **Lookups score well throughout.** Top Gun, The Matrix, Tom Hanks's
+  movies, the "more than 5000 votes" filter and "born before 1940" scored
+  around 0.9 correctness with full context recall in every run.
+- **The judge is literal.** In run 2, "Who was born in 1965 and has
+  directed a movie?" got 0.5 faithfulness: the generated Cypher filtered
+  on the birth year without returning it, so "born in 1965" wasn't in the
+  context. "How many movies did Tom Hanks appear in?" scored 0.11–0.14
+  correctness in all three runs although the answer, 8, was right: the
+  judge didn't match the answer's statements to the one-row ground truth's.
+- **Correct refusals score low on correctness.** A refusal ("the
+  information … is missing") or small-talk reply yields no factual
+  statements, so F1 is 0 and only the 0.25-weighted similarity is left
+  (0.04–0.46). RAGAS behaves the same way, so for those rows, look at the
+  answer itself to see whether it behaved as described.
+- **Still open: text2cypher.** It never found the longest actor name
+  (zero context recall in every run). In run 3 it answered "Which movie
+  has the most Oscars?" by returning the `votes` column aliased as
+  `oscarCount`, so the final answer reported "an Oscar count of 6200",
+  though it added that the number "seems incorrect". Runs 1–2 correctly
+  said the information was missing. Making text2cypher refuse questions
+  the schema can't answer is the next thing this benchmark points at.

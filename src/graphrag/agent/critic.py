@@ -9,18 +9,25 @@ from graphrag.prompts import PromptRepository
 
 _SYSTEM_PROMPT = "agent_answer_critique_system.txt"
 _USER_PROMPT = "agent_answer_critique_user.txt"
+_DATA_PROMPT = "agent_answer_critique_data.txt"
 
 
 class AnswerCritic:
     """Checks whether the answers gathered in ``history`` fully answer the
     question, and if not, returns follow-up questions for what's missing
     (ch05's ``critique_answers``).
+
+    ``data_description`` (e.g. ``GraphSchema.to_prompt()``, or a written
+    summary of what the agent can look up) tells the critic what data
+    exists, so it doesn't ask follow-ups nothing could answer -- the book's
+    critic has no such input.
     """
 
     def __init__(
         self,
         llm: LLMClient,
         *,
+        data_description: str | None = None,
         model: str = OpenAILLMClient.DEFAULT_MODEL,
         prompts: PromptRepository | None = None,
     ) -> None:
@@ -28,6 +35,11 @@ class AnswerCritic:
         self._model = model
         prompts = prompts or PromptRepository()
         self._system_message = prompts.load(_SYSTEM_PROMPT)
+        if data_description:
+            data_section = prompts.load(_DATA_PROMPT).format(
+                data_description=data_description.strip()
+            )
+            self._system_message += f"\n\n{data_section}"
         self._user_template = prompts.load(_USER_PROMPT)
 
     def critique(self, question: str, history: Sequence[Message]) -> list[str]:
