@@ -1,0 +1,1562 @@
+"""Build the repo-feature slide deck: what this repo is, how it's
+structured and how it works, with examples.
+
+The deck is generated, not hand-edited, so it can be rebuilt and kept in
+sync with the code. Slide *content* is plain data (``SLIDES`` below);
+``DeckBuilder`` turns each slide spec into a PowerPoint slide. To change
+the deck, edit ``SLIDES`` and rebuild. ``tests/docs/test_repo_feature_deck.py``
+fails if a public ``graphrag`` name or an example script is missing from
+the deck, or if the deck names a class that no longer exists.
+
+Inline code in any text is written between backticks (`like this`) and
+rendered in a monospace font.
+
+Run from the repo root:
+
+    .venv/Scripts/python.exe docs/repo-feature/build_deck.py
+"""
+
+from __future__ import annotations
+
+import argparse
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
+from pptx import Presentation
+from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
+from pptx.oxml.ns import qn
+from pptx.slide import Slide
+from pptx.text.text import TextFrame, _Paragraph
+from pptx.util import Emu, Inches, Pt
+
+DEFAULT_OUTPUT = Path(__file__).with_name("repo-feature.pptx")
+FOOTER = "rag-learning-lab · repo features"
+
+# --------------------------------------------------------------------------
+# Slide specs: the deck's content, as data.
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TitleSlide:
+    title: str
+    subtitle: str
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class BulletSlide:
+    """``bullets`` starting with two spaces are rendered one level deeper."""
+
+    title: str
+    bullets: tuple[str, ...]
+    subtitle: str = ""
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class TableSlide:
+    """``widths`` are relative column widths."""
+
+    title: str
+    header: tuple[str, ...]
+    rows: tuple[tuple[str, ...], ...]
+    widths: tuple[float, ...]
+    subtitle: str = ""
+    caption: str = ""
+    font_size: float = 12
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class CodeSlide:
+    """Code on the right, optional bullets on the left (full width when
+    there are none).
+    """
+
+    title: str
+    code: str
+    bullets: tuple[str, ...] = ()
+    subtitle: str = ""
+    code_size: float = 11
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class Layer:
+    label: str
+    boxes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class LayerSlide:
+    """Stacked architecture layers, top depends on bottom."""
+
+    title: str
+    layers: tuple[Layer, ...]
+    subtitle: str = ""
+    caption: str = ""
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class ChapterSlide:
+    """One book chapter: a flow diagram, key points, a code example and the
+    command that runs the chapter's example script.
+    """
+
+    title: str
+    subtitle: str
+    flow: tuple[str, ...]
+    bullets: tuple[str, ...]
+    code: str
+    command: str
+    notes: str = ""
+
+
+SlideSpec = TitleSlide | BulletSlide | TableSlide | CodeSlide | LayerSlide | ChapterSlide
+
+
+def iter_text(spec: SlideSpec) -> Iterator[str]:
+    """Every piece of text a slide spec carries (used by the sync test)."""
+    match spec:
+        case TitleSlide():
+            yield from (spec.title, spec.subtitle)
+        case BulletSlide():
+            yield from (spec.title, spec.subtitle, *spec.bullets)
+        case TableSlide():
+            yield from (spec.title, spec.subtitle, spec.caption, *spec.header)
+            for row in spec.rows:
+                yield from row
+        case CodeSlide():
+            yield from (spec.title, spec.subtitle, spec.code, *spec.bullets)
+        case LayerSlide():
+            yield from (spec.title, spec.subtitle, spec.caption)
+            for layer in spec.layers:
+                yield from (layer.label, *layer.boxes)
+        case ChapterSlide():
+            yield from (spec.title, spec.subtitle, spec.code, spec.command)
+            yield from (*spec.flow, *spec.bullets)
+    yield spec.notes
+
+
+# --------------------------------------------------------------------------
+# Rendering.
+# --------------------------------------------------------------------------
+
+
+class Theme:
+    """Colors and fonts. Subclass and override to restyle the deck."""
+
+    navy = RGBColor(0x1F, 0x2A, 0x44)
+    accent = RGBColor(0x0F, 0x76, 0x6E)
+    accent_light = RGBColor(0xE6, 0xF2, 0xF1)
+    text = RGBColor(0x1F, 0x29, 0x37)
+    muted = RGBColor(0x6B, 0x72, 0x80)
+    white = RGBColor(0xFF, 0xFF, 0xFF)
+    code_bg = RGBColor(0xF3, 0xF4, 0xF6)
+    code_border = RGBColor(0xD1, 0xD5, 0xDB)
+    inline_code = RGBColor(0x9F, 0x12, 0x39)
+    zebra = RGBColor(0xF8, 0xFA, 0xFC)
+    layer_fills = (
+        RGBColor(0xFE, 0xF3, 0xC7),
+        RGBColor(0xDB, 0xEA, 0xFE),
+        RGBColor(0xE6, 0xF2, 0xF1),
+        RGBColor(0xED, 0xE9, 0xFE),
+        RGBColor(0xF3, 0xF4, 0xF6),
+    )
+    font = "Calibri"
+    mono = "Consolas"
+
+
+class DeckBuilder:
+    """Renders slide specs onto a 16:9 deck, one blank-layout slide each."""
+
+    WIDTH = Inches(13.333)
+    HEIGHT = Inches(7.5)
+    MARGIN = Inches(0.5)
+    HEADER_HEIGHT = Inches(1.05)
+    CONTENT_TOP = Inches(1.35)
+    FOOTER_TOP = Inches(7.08)
+    INLINE_CODE_SCALE = 0.88  # Consolas reads larger than Calibri at the same size
+
+    def __init__(self, theme: Theme | None = None) -> None:
+        self._theme = theme or Theme()
+        self._prs = Presentation()
+        self._prs.slide_width = self.WIDTH
+        self._prs.slide_height = self.HEIGHT
+        self._blank = self._prs.slide_layouts[6]
+
+    @property
+    def content_width(self) -> int:
+        return self.WIDTH - 2 * self.MARGIN
+
+    def add_all(self, specs: Sequence[SlideSpec]) -> None:
+        for spec in specs:
+            self.add(spec)
+
+    def add(self, spec: SlideSpec) -> None:
+        slide = self._prs.slides.add_slide(self._blank)
+        match spec:
+            case TitleSlide():
+                self._title_slide(slide, spec)
+            case BulletSlide():
+                self._bullet_slide(slide, spec)
+            case TableSlide():
+                self._table_slide(slide, spec)
+            case CodeSlide():
+                self._code_slide(slide, spec)
+            case LayerSlide():
+                self._layer_slide(slide, spec)
+            case ChapterSlide():
+                self._chapter_slide(slide, spec)
+        if spec.notes:
+            slide.notes_slide.notes_text_frame.text = spec.notes
+
+    def save(self, path: Path) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._prs.save(str(path))
+        return path
+
+    # ---- slide types -----------------------------------------------------
+
+    def _title_slide(self, slide: Slide, spec: TitleSlide) -> None:
+        t = self._theme
+        self._rect(slide, 0, 0, self.WIDTH, self.HEIGHT, t.navy)
+        self._rect(slide, self.MARGIN, Inches(3.55), Inches(1.4), Inches(0.08), t.accent)
+        title = self._textbox(slide, self.MARGIN, Inches(2.2), self.content_width, Inches(1.3))
+        self._write(title.paragraphs[0], spec.title, size=48, color=t.white, bold=True)
+        sub = self._textbox(slide, self.MARGIN, Inches(3.85), self.content_width, Inches(1.6))
+        self._write(
+            sub.paragraphs[0], spec.subtitle, size=22, color=t.white, code_color=t.accent_light
+        )
+        foot = self._textbox(slide, self.MARGIN, Inches(6.6), self.content_width, Inches(0.4))
+        self._write(
+            foot.paragraphs[0],
+            "Generated by `docs/repo-feature/build_deck.py`",
+            size=12,
+            color=t.accent_light,
+            code_color=t.accent_light,
+        )
+
+    def _bullet_slide(self, slide: Slide, spec: BulletSlide) -> None:
+        self._chrome(slide, spec.title, spec.subtitle)
+        height = self.FOOTER_TOP - self.CONTENT_TOP - Inches(0.1)
+        frame = self._textbox(slide, self.MARGIN, self.CONTENT_TOP, self.content_width, height)
+        self._bullets(frame, spec.bullets, size=17)
+
+    def _table_slide(self, slide: Slide, spec: TableSlide) -> None:
+        t = self._theme
+        self._chrome(slide, spec.title, spec.subtitle)
+        caption_height = Inches(0.55) if spec.caption else 0
+        top = self.CONTENT_TOP
+        rows = len(spec.rows) + 1
+        shape = slide.shapes.add_table(
+            rows,
+            len(spec.header),
+            self.MARGIN,
+            top,
+            self.content_width,
+            Inches(0.4) * rows,
+        )
+        table = shape.table
+        total = sum(spec.widths)
+        for i, weight in enumerate(spec.widths):
+            table.columns[i].width = int(self.content_width * weight / total)
+        for col, text in enumerate(spec.header):
+            self._cell(table.cell(0, col), text, spec.font_size, t.navy, t.white, bold=True)
+        for r, row in enumerate(spec.rows, start=1):
+            fill = t.zebra if r % 2 == 0 else t.white
+            for col, text in enumerate(row):
+                self._cell(table.cell(r, col), text, spec.font_size, fill, t.text, bold=col == 0)
+        if spec.caption:
+            frame = self._textbox(
+                slide,
+                self.MARGIN,
+                self.FOOTER_TOP - caption_height,
+                self.content_width,
+                caption_height,
+            )
+            self._write(frame.paragraphs[0], spec.caption, size=13, color=t.muted, italic=True)
+
+    def _code_slide(self, slide: Slide, spec: CodeSlide) -> None:
+        self._chrome(slide, spec.title, spec.subtitle)
+        height = self.FOOTER_TOP - self.CONTENT_TOP - Inches(0.15)
+        if spec.bullets:
+            left_width = Inches(5.3)
+            frame = self._textbox(slide, self.MARGIN, self.CONTENT_TOP, left_width, height)
+            self._bullets(frame, spec.bullets, size=14)
+            code_left = self.MARGIN + left_width + Inches(0.3)
+        else:
+            code_left = self.MARGIN
+        code_width = self.WIDTH - self.MARGIN - code_left
+        self._code(
+            slide, spec.code, code_left, self.CONTENT_TOP, code_width, height, spec.code_size
+        )
+
+    def _layer_slide(self, slide: Slide, spec: LayerSlide) -> None:
+        t = self._theme
+        self._chrome(slide, spec.title, spec.subtitle)
+        caption_height = Inches(0.5) if spec.caption else 0
+        available = self.FOOTER_TOP - self.CONTENT_TOP - caption_height - Inches(0.1)
+        gap = Inches(0.14)
+        row_height = int((available - gap * (len(spec.layers) - 1)) / len(spec.layers))
+        label_width = Inches(2.1)
+        box_gap = Inches(0.12)
+        for i, layer in enumerate(spec.layers):
+            top = self.CONTENT_TOP + i * (row_height + gap)
+            fill = t.layer_fills[i % len(t.layer_fills)]
+            label = self._rect(slide, self.MARGIN, top, label_width, row_height, t.navy)
+            self._shape_text(label, layer.label, size=13, color=t.white, bold=True)
+            boxes_left = self.MARGIN + label_width + box_gap
+            boxes_width = self.WIDTH - self.MARGIN - boxes_left
+            n = len(layer.boxes)
+            box_width = int((boxes_width - box_gap * (n - 1)) / n)
+            for j, text in enumerate(layer.boxes):
+                left = boxes_left + j * (box_width + box_gap)
+                box = self._rect(
+                    slide,
+                    left,
+                    top,
+                    box_width,
+                    row_height,
+                    fill,
+                    shape=MSO_SHAPE.ROUNDED_RECTANGLE,
+                    line=t.code_border,
+                )
+                self._shape_text(box, text, size=12, color=t.text)
+        if spec.caption:
+            frame = self._textbox(
+                slide,
+                self.MARGIN,
+                self.FOOTER_TOP - caption_height,
+                self.content_width,
+                caption_height,
+            )
+            self._write(frame.paragraphs[0], spec.caption, size=13, color=t.muted, italic=True)
+
+    def _chapter_slide(self, slide: Slide, spec: ChapterSlide) -> None:
+        t = self._theme
+        self._chrome(slide, spec.title, spec.subtitle)
+        flow_height = Inches(0.85)
+        self._flow(slide, spec.flow, self.CONTENT_TOP - Inches(0.1), flow_height)
+
+        body_top = self.CONTENT_TOP + flow_height + Inches(0.2)
+        body_height = self.FOOTER_TOP - body_top - Inches(0.1)
+        left_width = Inches(5.9)
+        frame = self._textbox(slide, self.MARGIN, body_top, left_width, body_height)
+        self._bullets(frame, spec.bullets, size=13)
+
+        code_left = self.MARGIN + left_width + Inches(0.3)
+        code_width = self.WIDTH - self.MARGIN - code_left
+        command_height = Inches(0.5)
+        code_height = self._code(
+            slide,
+            spec.code,
+            code_left,
+            body_top,
+            code_width,
+            body_height - command_height - Inches(0.12),
+            10.5,
+        )
+
+        command = self._rect(
+            slide,
+            code_left,
+            body_top + code_height + Inches(0.12),
+            code_width,
+            command_height,
+            t.navy,
+        )
+        tf = command.text_frame
+        self._margins(tf, Inches(0.12), Inches(0.04))
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        tf.word_wrap = True
+        para = tf.paragraphs[0]
+        run = para.add_run()
+        run.text = "$ " + spec.command
+        self._font(run, size=10, color=t.white, mono=True)
+
+    # ---- building blocks -------------------------------------------------
+
+    def _chrome(self, slide: Slide, title: str, subtitle: str) -> None:
+        """Header bar with title and optional subtitle, plus footer."""
+        t = self._theme
+        self._rect(slide, 0, 0, self.WIDTH, self.HEADER_HEIGHT, t.navy)
+        self._rect(slide, 0, self.HEADER_HEIGHT, self.WIDTH, Inches(0.05), t.accent)
+        frame = self._textbox(
+            slide, self.MARGIN, Inches(0.12), self.content_width, self.HEADER_HEIGHT - Inches(0.2)
+        )
+        frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+        self._write(frame.paragraphs[0], title, size=28, color=t.white, bold=True)
+        if subtitle:
+            para = frame.add_paragraph()
+            self._write(para, subtitle, size=13, color=t.accent_light, code_color=t.accent_light)
+
+        foot = self._textbox(slide, self.MARGIN, self.FOOTER_TOP, self.content_width, Inches(0.3))
+        para = foot.paragraphs[0]
+        self._write(para, FOOTER, size=10, color=t.muted)
+        number = self._textbox(slide, self.MARGIN, self.FOOTER_TOP, self.content_width, Inches(0.3))
+        para = number.paragraphs[0]
+        para.alignment = PP_ALIGN.RIGHT
+        self._write(para, str(len(self._prs.slides)), size=10, color=t.muted)
+
+    def _flow(self, slide: Slide, steps: Sequence[str], top: int, height: int) -> None:
+        """A left-to-right row of step boxes joined by chevrons."""
+        t = self._theme
+        arrow = Inches(0.26)
+        gap = Inches(0.06)
+        n = len(steps)
+        box_width = int((self.content_width - (n - 1) * (arrow + 2 * gap)) / n)
+        size = 12 if n <= 5 else 11 if n <= 7 else 10
+        for i, text in enumerate(steps):
+            left = self.MARGIN + i * (box_width + arrow + 2 * gap)
+            box = self._rect(
+                slide,
+                left,
+                top,
+                box_width,
+                height,
+                t.accent_light,
+                shape=MSO_SHAPE.ROUNDED_RECTANGLE,
+                line=t.accent,
+            )
+            self._shape_text(box, text, size=size, color=t.text)
+            if i < n - 1:
+                self._rect(
+                    slide,
+                    left + box_width + gap,
+                    top + (height - arrow) // 2,
+                    arrow,
+                    arrow,
+                    t.accent,
+                    shape=MSO_SHAPE.CHEVRON,
+                )
+
+    def _code(
+        self, slide: Slide, code: str, left: int, top: int, width: int, height: int, size: float
+    ) -> int:
+        """Draws a code panel at most ``height`` tall, shrunk to fit the
+        code, and returns the height it used.
+        """
+        t = self._theme
+        lines = code.strip("\n").splitlines()
+        padding = Inches(0.12)
+        fitted = int(Pt(size) * 1.22 * len(lines) + 2 * padding + Inches(0.05))
+        height = min(height, fitted)
+        box = self._rect(slide, left, top, width, height, t.code_bg, line=t.code_border)
+        tf = box.text_frame
+        tf.word_wrap = False
+        tf.auto_size = MSO_AUTO_SIZE.NONE
+        tf.vertical_anchor = MSO_ANCHOR.TOP
+        self._margins(tf, Inches(0.15), padding)
+        for i, line in enumerate(lines):
+            para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+            para.alignment = PP_ALIGN.LEFT
+            run = para.add_run()
+            run.text = line or " "
+            self._font(run, size=size, color=t.text, mono=True)
+        return height
+
+    def _bullets(self, frame: TextFrame, items: Sequence[str], size: float) -> None:
+        t = self._theme
+        for i, item in enumerate(items):
+            para = frame.paragraphs[0] if i == 0 else frame.add_paragraph()
+            level = 1 if item.startswith("  ") else 0
+            para.space_before = Pt(0 if i == 0 else (3 if level else 7))
+            item_size = size - 1.5 if level else size
+            self._bullet_format(para, level)
+            self._write(para, item.strip(), size=item_size, color=t.text)
+
+    def _bullet_format(self, para: _Paragraph, level: int) -> None:
+        """Hanging-indent bullet; python-pptx has no API for this on a
+        plain text box, so set it in the paragraph XML.
+        """
+        indent = Inches(0.24)
+        p_pr = para._p.get_or_add_pPr()
+        p_pr.set("marL", str(int(indent * (level + 1) + Inches(0.05) * level)))
+        p_pr.set("indent", str(-int(indent)))
+        bu_clr = p_pr.makeelement(qn("a:buClr"), {})
+        srgb = bu_clr.makeelement(qn("a:srgbClr"), {"val": str(self._theme.accent)})
+        bu_clr.append(srgb)
+        p_pr.append(bu_clr)
+        bu_char = p_pr.makeelement(qn("a:buChar"), {"char": "–" if level else "•"})
+        p_pr.append(bu_char)
+
+    def _cell(
+        self, cell, text: str, size: float, fill: RGBColor, color: RGBColor, *, bold: bool
+    ) -> None:
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = fill
+        cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+        cell.margin_left = cell.margin_right = Inches(0.08)
+        cell.margin_top = cell.margin_bottom = Inches(0.04)
+        tf = cell.text_frame
+        tf.word_wrap = True
+        self._write(tf.paragraphs[0], text, size=size, color=color, bold=bold)
+
+    def _write(
+        self,
+        para: _Paragraph,
+        text: str,
+        *,
+        size: float,
+        color: RGBColor,
+        bold: bool = False,
+        italic: bool = False,
+        code_color: RGBColor | None = None,
+    ) -> None:
+        """Adds ``text`` to ``para``; `backticked` spans become monospace."""
+        for i, part in enumerate(text.split("`")):
+            if not part:
+                continue
+            run = para.add_run()
+            run.text = part
+            is_code = i % 2 == 1
+            self._font(
+                run,
+                size=size * self.INLINE_CODE_SCALE if is_code else size,
+                color=(code_color or self._theme.inline_code) if is_code else color,
+                bold=bold,
+                italic=italic,
+                mono=is_code,
+            )
+
+    def _font(
+        self,
+        run,
+        *,
+        size: float,
+        color: RGBColor,
+        bold: bool = False,
+        italic: bool = False,
+        mono: bool = False,
+    ) -> None:
+        run.font.size = Pt(size)
+        run.font.name = self._theme.mono if mono else self._theme.font
+        run.font.bold = bold
+        run.font.italic = italic
+        run.font.color.rgb = color
+
+    def _textbox(self, slide: Slide, left: int, top: int, width: int, height: int) -> TextFrame:
+        frame = slide.shapes.add_textbox(left, top, width, height).text_frame
+        frame.word_wrap = True
+        frame.auto_size = MSO_AUTO_SIZE.NONE
+        self._margins(frame, Inches(0.05), Inches(0.03))
+        return frame
+
+    def _rect(
+        self,
+        slide: Slide,
+        left: int,
+        top: int,
+        width: int,
+        height: int,
+        fill: RGBColor,
+        *,
+        shape: MSO_SHAPE = MSO_SHAPE.RECTANGLE,
+        line: RGBColor | None = None,
+    ):
+        rect = slide.shapes.add_shape(shape, Emu(left), Emu(top), Emu(width), Emu(height))
+        if shape == MSO_SHAPE.ROUNDED_RECTANGLE:
+            rect.adjustments[0] = 0.12
+        rect.shadow.inherit = False
+        rect.fill.solid()
+        rect.fill.fore_color.rgb = fill
+        if line is None:
+            rect.line.fill.background()
+        else:
+            rect.line.color.rgb = line
+            rect.line.width = Pt(1)
+        return rect
+
+    def _shape_text(
+        self, shape, text: str, *, size: float, color: RGBColor, bold: bool = False
+    ) -> None:
+        tf = shape.text_frame
+        tf.word_wrap = True
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        self._margins(tf, Inches(0.06), Inches(0.03))
+        for i, line in enumerate(text.split("\n")):
+            para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+            para.alignment = PP_ALIGN.CENTER
+            self._write(para, line, size=size if i == 0 else size - 2, color=color, bold=bold)
+
+    @staticmethod
+    def _margins(frame: TextFrame, horizontal: int, vertical: int) -> None:
+        frame.margin_left = frame.margin_right = horizontal
+        frame.margin_top = frame.margin_bottom = vertical
+
+
+# --------------------------------------------------------------------------
+# The deck.
+# --------------------------------------------------------------------------
+
+SLIDES: tuple[SlideSpec, ...] = (
+    TitleSlide(
+        title="rag-learning-lab",
+        subtitle=(
+            "The Essential GraphRAG book, re-implemented as a reusable, object-oriented "
+            "Python library (`graphrag`) on an embedded Kuzu graph database"
+        ),
+        notes="Repo-feature overview: what the repo is, how it is structured, how it works.",
+    ),
+    BulletSlide(
+        title="Why this repo exists",
+        subtitle="Two goals drive every design decision",
+        bullets=(
+            (
+                "Re-implements the Essential GraphRAG book's notebooks `ch02`–`ch08` as a proper "
+                "Python package, `graphrag`, instead of linear notebook scripts"
+            ),
+            "Goal 1: cover the book's concepts faithfully",
+            (
+                "  PDF ingestion and chunking, vector and hybrid search, step-back prompting, "
+                "parent-child retrieval"
+            ),
+            (
+                "  text2cypher, agentic RAG (query rewriting, tool routing, critique), structured "
+                "extraction, Microsoft-style GraphRAG, evaluation"
+            ),
+            "Goal 2: rebuild it with OOP for reusability",
+            (
+                "  The book's module-level globals and free functions (`neo4j_driver`, `chat()`, "
+                "`embed()`) become classes behind interfaces"
+            ),
+            "  Every piece can be swapped, mocked and unit-tested on its own",
+            (
+                "Neo4j is replaced by Kuzu, an embedded graph database: no server, and only "
+                "`OPENAI_API_KEY` is needed at runtime"
+            ),
+            "`template/kg-rag` is the vendored book repo. It is reference only and never edited",
+            (
+                "Every departure from the book is written up in `examples/README.md`, under "
+                '"Where this departs from the book"'
+            ),
+        ),
+    ),
+    TableSlide(
+        title="From the book to this repo",
+        subtitle="One example script per chapter, built from library classes",
+        header=("Ch.", "Topic", "Example script (examples/)", "Main classes"),
+        widths=(0.85, 2.5, 4.15, 4.8),
+        font_size=12,
+        rows=(
+            (
+                "ch02",
+                "PDF ingestion, vector and hybrid search",
+                "`vector_similarity_and_hybrid_search.py`",
+                "PdfLoader, TextChunker, OpenAIEmbedder, KuzuGraphStore",
+            ),
+            (
+                "ch03",
+                "Step-back prompting, parent-child retrieval",
+                "`parent_child_stepback_rag.py`",
+                "SectionSplitter, TokenCounter, QueryRewriter, KuzuParentChildGraphStore",
+            ),
+            (
+                "ch04",
+                "text2cypher",
+                "`text2cypher_movies.py`",
+                "Text2Cypher, KuzuCypherGraphStore, MovieGraphSeeder",
+            ),
+            (
+                "ch05",
+                "Agentic RAG",
+                "`agentic_rag_movies.py`",
+                "Agent, QueryUpdater, ToolRouter, AnswerCritic, Tool subclasses",
+            ),
+            (
+                "ch06",
+                "Structured extraction into a knowledge graph",
+                "`structured_extraction_contracts.py`",
+                "Contract (Pydantic), StructuredExtractor, ContractGraphImporter",
+            ),
+            (
+                "ch07",
+                "Microsoft-style GraphRAG",
+                "`graphrag_odyssey.py`",
+                "EntityRelationshipExtractor, CommunityReporter, GlobalSearch, LocalSearch",
+            ),
+            (
+                "ch08",
+                "Evaluating the RAG system",
+                "`evaluate_agent_movies.py`",
+                "BenchmarkRunner, Evaluator, AnswerCorrectness, ContextRecall, Faithfulness",
+            ),
+            (
+                "shared",
+                "Used by several scripts",
+                "`movie_agent.py`, `constants.py`",
+                (
+                    "`build_movie_agent()` wires the ch05 agent for ch05 and ch08; shared "
+                    "constants such as `MOVIES_TERMINOLOGY`"
+                ),
+            ),
+        ),
+    ),
+    TableSlide(
+        title="Kuzu instead of Neo4j",
+        subtitle="Embedded, in-process, MIT-licensed, and it speaks Cypher",
+        header=("", "Neo4j (the book)", "Kuzu (this repo)"),
+        widths=(2.2, 4.6, 5.5),
+        font_size=13,
+        rows=(
+            ("Deployment", "Separate server or Docker", "In-process library: `pip install kuzu`"),
+            (
+                "Configuration",
+                "`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`",
+                (
+                    "A directory: `KUZU_DB_PATH=data/kuzu_db`. Each example uses its own, e.g. "
+                    "`data/kuzu_db_ch04`"
+                ),
+            ),
+            (
+                "Schema",
+                "Labels created implicitly on insert",
+                "`CREATE NODE TABLE` / `CREATE REL TABLE` before any data goes in",
+            ),
+            (
+                "Reading the schema",
+                "APOC `apoc.meta.data()` samples the graph",
+                "Read from the catalog: `show_tables()`, `table_info()`, `show_connection()`",
+            ),
+            (
+                "Vector search",
+                "Vector index",
+                "`CREATE_VECTOR_INDEX` (HNSW, cosine distance)",
+            ),
+            ("Keyword search", "Full-text index", "`CREATE_FTS_INDEX` (BM25 over stemmed tokens)"),
+            (
+                "Communities",
+                "GDS: `gds.graph.project`, `gds.louvain.write`",
+                "`algo` extension: `project_graph`, `louvain`",
+            ),
+            (
+                "Isolation",
+                "—",
+                (
+                    "Only the three `Kuzu*Store` classes import `kuzu`; everything else talks to an "
+                    "interface"
+                ),
+            ),
+        ),
+    ),
+    CodeSlide(
+        title="Repository layout",
+        code_size=12.5,
+        code="""
+rag-learning-lab/
+├── src/graphrag/        the library, installed editable as graphrag
+│   ├── llm/             LLM client, step-back rewriter, token counter
+│   ├── prompts/         PromptRepository + every prompt as a .txt file
+│   ├── graph/           graph-store interfaces, Kuzu stores, Text2Cypher
+│   ├── ingestion/       PDF loading, section splitting, chunking
+│   ├── retrieval/       embedder, entity index, global/local search
+│   ├── extraction/      structured + entity extraction, communities
+│   ├── agent/           agent, query planners, tool router, critic, tools
+│   ├── evaluation/      benchmark runner, evaluator, RAGAS-style metrics
+│   ├── pipeline/        Pipeline + shared steps
+│   ├── datasets/        movies graph CSV files, benchmark, contract, Odyssey
+│   └── settings.py      Settings.from_env()
+├── examples/            one runnable script per chapter + README.md
+├── tests/               pytest, mirrors src/graphrag/ package by package
+├── docs/                python.md (conventions), repo-feature/ (this deck)
+├── template/kg-rag/     vendored book repo: reference only
+├── requirements.in/.txt pip-tools source / pinned lockfile
+└── pyproject.toml       package, pytest, ruff and mypy config
+""",
+    ),
+    LayerSlide(
+        title="Architecture",
+        subtitle="Dependencies point downward; only the bottom layer knows about OpenAI or Kuzu",
+        layers=(
+            Layer(
+                "Entry points",
+                (
+                    "examples/*.py\none composition root per chapter",
+                    "movie_agent.py\nbuild_movie_agent()",
+                    "Settings.from_env()\n.env → OPENAI_API_KEY, KUZU_DB_PATH",
+                ),
+            ),
+            Layer(
+                "Orchestration",
+                (
+                    "pipeline\nPipeline + steps",
+                    "agent\nAgent, ToolRouter, AnswerCritic",
+                    "evaluation\nBenchmarkRunner, Evaluator, metrics",
+                ),
+            ),
+            Layer(
+                "Capabilities",
+                (
+                    "ingestion\nPdfLoader, SectionSplitter, TextChunker",
+                    "graph.Text2Cypher\nquestion → Cypher",
+                    "extraction\nstructured + entity graphs",
+                    "retrieval\nglobal / local search",
+                ),
+            ),
+            Layer(
+                "Interfaces",
+                (
+                    "LLMClient",
+                    "Embedder",
+                    "GraphStore · CypherGraphStore\nParentChildGraphStore",
+                    "PromptRepository",
+                ),
+            ),
+            Layer(
+                "Adapters",
+                (
+                    "OpenAILLMClient\nOpenAIEmbedder",
+                    "KuzuGraphStore · KuzuCypherGraphStore\nKuzuParentChildGraphStore",
+                    "prompts/*.txt",
+                ),
+            ),
+        ),
+        caption=(
+            "Classes take their dependencies through the constructor, so tests swap the bottom "
+            "layer for fakes or a throwaway Kuzu database."
+        ),
+    ),
+    TableSlide(
+        title="Package reference (1/2)",
+        subtitle="Every public name exported from a graphrag package",
+        header=("Package", "Public API (__all__)", "Role"),
+        widths=(1.7, 7.0, 3.6),
+        font_size=11.5,
+        rows=(
+            (
+                "graphrag.llm",
+                (
+                    "LLMClient, OpenAILLMClient, Message, ToolCall, ToolDefinition, "
+                    "LLMResponseError, QueryRewriter, TokenCounter, load_json_object, "
+                    "load_json_field"
+                ),
+                (
+                    "Chat, tool choice and structured output; step-back rewriting; tiktoken "
+                    "counts; tolerant JSON parsing"
+                ),
+            ),
+            (
+                "graphrag.prompts",
+                "PromptRepository",
+                "Loads prompt text from .txt files",
+            ),
+            (
+                "graphrag.graph",
+                (
+                    "GraphStore, KuzuGraphStore, CypherGraphStore, KuzuCypherGraphStore, "
+                    "ParentChildGraphStore, KuzuParentChildGraphStore, ChunkMatch, ParentMatch, "
+                    "GraphSchema, Property, RelationshipPattern, GraphQueryError, Text2Cypher, "
+                    "CypherExample"
+                ),
+                (
+                    "Storage and search interfaces, their Kuzu implementations, schema "
+                    "models, text2cypher"
+                ),
+            ),
+            (
+                "graphrag.ingestion",
+                "PdfLoader, SectionSplitter, TextChunker",
+                "Download, extract text, split into sections and chunks",
+            ),
+            (
+                "graphrag.retrieval",
+                (
+                    "Embedder, OpenAIEmbedder, EntityEmbeddingIndexer, ENTITY_VECTOR_INDEX, "
+                    "GlobalSearch, KeyPoint, LocalSearch, LocalContext"
+                ),
+                "Embeddings; ch07 entity index and global/local search",
+            ),
+            (
+                "graphrag.settings",
+                "Settings",
+                "Runtime config read once from the environment",
+            ),
+        ),
+    ),
+    TableSlide(
+        title="Package reference (2/2)",
+        subtitle="Every public name exported from a graphrag package",
+        header=("Package", "Public API (__all__)", "Role"),
+        widths=(1.7, 7.0, 3.6),
+        font_size=11.5,
+        rows=(
+            (
+                "graphrag.extraction",
+                (
+                    "StructuredExtractor, Contract, ContractType, Organization, Location, "
+                    "ContractGraphImporter, EntityRelationshipExtractor, ChunkExtraction, "
+                    "ExtractedEntity, ExtractedRelationship, EntityGraphImporter, "
+                    "DescriptionSummarizer, KuzuLouvainCommunityDetector, CommunityReporter, "
+                    "CommunityReport"
+                ),
+                (
+                    "ch06 schema-first extraction; ch07 schema-free entity graph, summaries, "
+                    "communities, reports"
+                ),
+            ),
+            (
+                "graphrag.agent",
+                (
+                    "Agent, AgentResponse, QueryPlanner, QueryUpdater, QueryDecomposer, ToolRouter, "
+                    "ToolRoutingError, AnswerCritic, Tool, ToolResult, string_parameters, "
+                    "AnswerGivenTool, Text2CypherTool, MovieInfoByTitleTool, MoviesInfoByActorTool"
+                ),
+                "ch05 agent loop and its tools; ch08 question splitting",
+            ),
+            (
+                "graphrag.evaluation",
+                (
+                    "BenchmarkCase, load_benchmark, BenchmarkRunner, Responder, EvaluationSample, "
+                    "Evaluator, EvaluationReport, ScoredSample, Metric, AnswerCorrectness, "
+                    "ContextRecall, Faithfulness, StatementExtractor, save_samples, load_samples"
+                ),
+                "ch08 benchmark answers, LLM-judge metrics, reports, saved samples",
+            ),
+            (
+                "graphrag.pipeline",
+                "Pipeline, LoadPdfTextStep, AnswerStep",
+                "Runs steps over a context object",
+            ),
+            (
+                "graphrag.datasets",
+                (
+                    "MovieGraphSeeder, MOVIES_BENCHMARK_PATH, LICENSE_AGREEMENT_PATH, "
+                    "OdysseyCorpus, ODYSSEY_URL"
+                ),
+                "Bundled data for ch04–ch08",
+            ),
+        ),
+    ),
+    TableSlide(
+        title="Core interfaces",
+        subtitle="Callers depend on these abstract base classes, never on a concrete client",
+        header=("Interface", "Contract", "Implementations", "In tests"),
+        widths=(2.2, 4.0, 3.9, 2.2),
+        font_size=12,
+        rows=(
+            (
+                "LLMClient",
+                "`complete`, `stream`, `choose_tools`, `parse`",
+                "OpenAILLMClient",
+                "ScriptedLLMClient",
+            ),
+            ("Embedder", "`embed(texts)`, `dimensions`", "OpenAIEmbedder", "FakeEmbedder"),
+            (
+                "GraphStore",
+                "`replace_chunks`, `vector_search`, `keyword_search`, `hybrid_search`",
+                "KuzuGraphStore",
+                "Kuzu in `tmp_path`",
+            ),
+            (
+                "ParentChildGraphStore",
+                "`replace_parents`, `parent_retrieval`",
+                "KuzuParentChildGraphStore",
+                "Kuzu in `tmp_path`",
+            ),
+            (
+                "CypherGraphStore",
+                "`query(cypher, params)`, `get_schema()`",
+                "KuzuCypherGraphStore",
+                "Kuzu in `tmp_path`",
+            ),
+            (
+                "QueryPlanner",
+                "`plan(question, history)` → questions to route",
+                "QueryUpdater (ch05), QueryDecomposer (ch08)",
+                "ScriptedLLMClient",
+            ),
+            (
+                "Tool",
+                "`name`, `description`, `parameters`, `run(arguments)` → ToolResult",
+                "MovieInfoByTitleTool, MoviesInfoByActorTool, Text2CypherTool, AnswerGivenTool",
+                "real tools on a seeded graph",
+            ),
+            (
+                "Metric",
+                "`score(sample)` → float or None (not applicable)",
+                "AnswerCorrectness, ContextRecall, Faithfulness",
+                "ScriptedLLMClient",
+            ),
+        ),
+        caption="Fakes live in `tests/conftest.py`. Graph tests use a real, throwaway Kuzu database.",
+    ),
+    CodeSlide(
+        title="How a script is wired",
+        subtitle="Composition root + Pipeline, from `examples/vector_similarity_and_hybrid_search.py`",
+        bullets=(
+            (
+                "`Settings.from_env()` reads `.env` once: `OPENAI_API_KEY` (required) and "
+                "`KUZU_DB_PATH` (default `data/kuzu_db`)"
+            ),
+            (
+                "Each script's `main()` is the composition root: it builds the concrete clients and "
+                "injects them into constructors"
+            ),
+            (
+                "A Pipeline runs a list of steps over one mutable context dataclass. A step is any "
+                "callable `step(context)`"
+            ),
+            (
+                "Shared steps live in `graphrag.pipeline`; chapter-specific steps (`ChunkStep`, "
+                "`HybridSearchStep`) live in the script"
+            ),
+            "Stores are context managers, so the database connection is always closed",
+            "`--process-name` names the log file, `logs/<process_name>.log` (logzero)",
+        ),
+        code="""
+load_dotenv()
+settings = Settings.from_env()
+openai_client = OpenAI(api_key=settings.openai_api_key)
+embedder = OpenAIEmbedder(openai_client)
+llm = OpenAILLMClient(openai_client)
+
+context = Ch02Context(question=QUESTION)
+Pipeline([
+    LoadPdfTextStep(PdfLoader(), PDF_URL, PDF_PATH),
+    ChunkStep(TextChunker(chunk_size=500, overlap=40)),
+    EmbedChunksStep(embedder),
+]).run(context)
+
+with KuzuGraphStore(settings.kuzu_db_path,
+                    embedding_dim=embedder.dimensions) as store:
+    store.replace_chunks(context.chunks, context.embeddings)
+    q = embedder.embed([context.question])[0]
+    Pipeline([
+        HybridSearchStep(store, context.question, q, k=4),
+        AnswerStep(llm, model="gpt-4o", label="Hybrid"),
+    ]).run(context)
+""",
+    ),
+    TableSlide(
+        title="Prompts are files, not string constants",
+        subtitle="`PromptRepository().load(name)` reads `src/graphrag/prompts/<name>`",
+        header=("Family", "Files", "Used by"),
+        widths=(1.9, 6.2, 4.2),
+        font_size=12,
+        rows=(
+            ("Answering", "`answer_system`, `answer_user`", "AnswerStep (ch02, ch03)"),
+            ("Step-back", "`step_back_system`", "QueryRewriter (ch03)"),
+            (
+                "text2cypher",
+                (
+                    "`text2cypher_instructions`, `_schema`, `_terminology`, `_examples`, "
+                    "`_question`, `_correction`"
+                ),
+                "Text2Cypher (ch04, ch05 tool)",
+            ),
+            (
+                "Agent",
+                (
+                    "`agent_query_update_*`, `agent_query_decompose_system`, "
+                    "`agent_tool_picker_*`, `agent_tool_answer`, `agent_answer_critique_*`, "
+                    "`agent_main_*`"
+                ),
+                "QueryUpdater, QueryDecomposer, ToolRouter, AnswerCritic, Agent",
+            ),
+            (
+                "Contracts",
+                "`contract_extraction_system`",
+                "StructuredExtractor (ch06)",
+            ),
+            (
+                "GraphRAG",
+                (
+                    "`graph_extraction`, `description_summary`, `community_report`, "
+                    "`global_map_system`, `global_reduce_system`, `local_search_system`"
+                ),
+                "ch07 extraction, summaries, reports, global and local search",
+            ),
+            (
+                "Evaluation",
+                (
+                    "`eval_statements_*`, `eval_answer_correctness_*`, `eval_context_recall_*`, "
+                    "`eval_faithfulness_*`"
+                ),
+                "StatementExtractor and the ch08 metrics",
+            ),
+        ),
+        caption=(
+            "Prompts start from the book's wording. Every change to one is explained in "
+            "`examples/README.md`."
+        ),
+    ),
+    ChapterSlide(
+        title="ch02 · PDF ingestion, vector and hybrid search",
+        subtitle="Re-implements `template/kg-rag/notebooks/ch02.ipynb`",
+        flow=(
+            "Download PDF\nPdfLoader",
+            "Chunk 500 / 40\nTextChunker",
+            "Embed chunks\nOpenAIEmbedder",
+            "Store in Kuzu\nKuzuGraphStore",
+            "Vector or hybrid search",
+            "Answer\nAnswerStep",
+        ),
+        bullets=(
+            (
+                "Vector search uses Kuzu's HNSW index. It returns cosine distance, which the store "
+                "flips to `score = 1 - distance` so higher is better"
+            ),
+            (
+                "Keyword search uses Kuzu's full-text index: BM25 over lowercased, stemmed tokens "
+                "with stopwords removed"
+            ),
+            (
+                "`hybrid_search` divides each result set by its own max score, merges them and keeps "
+                "the best score per chunk (`GraphStore._merge_normalized`)"
+            ),
+            (
+                "The same question is answered twice, with vector then hybrid retrieval, to compare "
+                "the two"
+            ),
+            "Vector search catches paraphrases; keyword search catches exact terms",
+        ),
+        code="""
+with KuzuGraphStore(db_path, embedding_dim=1536) as store:
+    store.replace_chunks(chunks, embeddings)
+
+    q = embedder.embed([question])[0]
+    vector_hits = store.vector_search(q, k=4)
+    hybrid_hits = store.hybrid_search(question, q, k=4)
+
+    for hit in hybrid_hits:          # ChunkMatch
+        print(hit.score, hit.text[:80])
+""",
+        command=".venv/Scripts/python examples/vector_similarity_and_hybrid_search.py",
+    ),
+    ChapterSlide(
+        title="ch03 · Step-back prompting and parent-child retrieval",
+        subtitle="Re-implements `template/kg-rag/notebooks/ch03.ipynb`",
+        flow=(
+            "Load PDF",
+            "Split sections\nSectionSplitter",
+            "Parents 2000\nchildren 500",
+            "Embed children only",
+            "Store hierarchy\nParent→Child",
+            "Step-back rewrite\nQueryRewriter",
+            "Parent retrieval → answer",
+        ),
+        bullets=(
+            (
+                "Sections run from 153 to 4,156 tokens (`TokenCounter`, gpt-4o's tokenizer), too "
+                "uneven to retrieve as they are, so each is chunked again"
+            ),
+            (
+                "Small child chunks are embedded and searched; the larger parent chunk they came "
+                "from is what goes to the LLM"
+            ),
+            (
+                "`parent_retrieval` vector-searches `Child` nodes, follows `HAS_CHILD` back to the "
+                "`Parent` and keeps each parent's best child score"
+            ),
+            (
+                "`QueryRewriter.step_back()` turns a specific question into a broader one, used "
+                "only for retrieval"
+            ),
+            "The final answer still uses the original question",
+        ),
+        code="""
+rewriter = QueryRewriter(llm)
+broad = rewriter.step_back(
+    "Who was Einstein's collaborator on sound reproduction?")
+# -> "Who were Einstein's professional associates?"
+
+with KuzuParentChildGraphStore(db_path,
+                               embedding_dim=1536) as store:
+    store.replace_parents(parents, children_per_parent,
+                          child_embeddings_per_parent)
+    q = embedder.embed([broad])[0]
+    for match in store.parent_retrieval(q, k=4):  # ParentMatch
+        print(match.score, match.text[:80])
+""",
+        command=".venv/Scripts/python examples/parent_child_stepback_rag.py",
+    ),
+    ChapterSlide(
+        title="ch04 · text2cypher",
+        subtitle="Re-implements `template/kg-rag/notebooks/ch04.ipynb`",
+        flow=(
+            "Seed movies graph\nMovieGraphSeeder",
+            "Read schema\nget_schema()",
+            "Build prompt\nText2Cypher",
+            "LLM writes Cypher",
+            "Run on Kuzu\nstore.query()",
+        ),
+        bullets=(
+            (
+                'Answers questions that need counting or aggregation ("Who directed the most '
+                "movies?\"), which chunk similarity can't do"
+            ),
+            (
+                "Bundled movies graph: 14 films, 48 people, with `ACTED_IN`, `DIRECTED`, `PRODUCED` "
+                "and `WROTE`, loaded from CSV with `COPY ... FROM`"
+            ),
+            (
+                "The schema comes straight from Kuzu's catalog into a GraphSchema (Property, "
+                "RelationshipPattern) and is rendered by `to_prompt()`"
+            ),
+            (
+                "Prompt sections: instructions, schema, terminology mapping, few-shot "
+                "CypherExample pairs, then the question"
+            ),
+            (
+                "Kuzu dialect rules (`size()`, `lower()`) and a `missing_information` reply stop "
+                "the LLM from inventing data"
+            ),
+        ),
+        code="""
+with KuzuCypherGraphStore(db_path) as store:
+    MovieGraphSeeder(store).seed()
+    text2cypher = Text2Cypher(
+        llm,
+        store.get_schema(),
+        terminology=MOVIES_TERMINOLOGY,
+        examples=MOVIES_CYPHER_EXAMPLES,
+        model="gpt-4o",
+    )
+    cypher = text2cypher.generate("Who directed the most movies?")
+    rows = store.query(cypher)   # list[dict]; GraphQueryError if rejected
+""",
+        command=".venv/Scripts/python examples/text2cypher_movies.py",
+    ),
+    ChapterSlide(
+        title="ch05 · Agentic RAG",
+        subtitle="Re-implements `template/kg-rag/notebooks/ch05.ipynb`",
+        flow=(
+            "Question",
+            "Query update\nQueryPlanner",
+            "Tool routing\nToolRouter",
+            "Critique\nAnswerCritic",
+            "Follow-up round (once)",
+            "Final answer\nAgent",
+        ),
+        bullets=(
+            (
+                "The LLM decides how to answer each question, keeping a history of "
+                '"For the question X, we have the answer Y" messages'
+            ),
+            (
+                "Tools: `movie_info_by_title` and `movies_info_by_actor` (fixed Cypher), "
+                "`text2cypher` (fallback) and `respond` (answer already known, or small talk)"
+            ),
+            (
+                "Text2CypherTool sends a rejected query back to `Text2Cypher.correct()` before "
+                "giving up and returning the error as its result"
+            ),
+            (
+                "The critic checks the history against the original question and may ask "
+                "follow-up questions, for one extra round"
+            ),
+            "An unknown tool or a missing argument raises ToolRoutingError",
+            "To add a tool: subclass Tool and pass it to ToolRouter",
+        ),
+        code="""
+class MovieInfoByTitleTool(Tool):
+    name = "movie_info_by_title"
+    description = "Get information about a movie by providing the title"
+    parameters = string_parameters("title", "The movie title")
+
+    def run(self, arguments) -> ToolResult:
+        return self._store.query(self._QUERY,
+                                 {"title": arguments["title"].lower()})
+
+agent = build_movie_agent(llm, store)   # examples/movie_agent.py
+agent.run("Who's the main actor in the movie Matrix "
+          "and what other movies is that person in?")
+""",
+        command=".venv/Scripts/python examples/agentic_rag_movies.py",
+    ),
+    ChapterSlide(
+        title="ch06 · Structured extraction into a knowledge graph",
+        subtitle="Re-implements `template/kg-rag/notebooks/ch06.ipynb`",
+        flow=(
+            "Load contract\nLICENSE_AGREEMENT_PATH",
+            "Extract\nStructuredExtractor",
+            "Import\nContractGraphImporter",
+            "Query the parties",
+        ),
+        bullets=(
+            (
+                "Schema first: the entities that matter are written down as Pydantic models "
+                "(Contract, Organization, Location, ContractType)"
+            ),
+            (
+                "`LLMClient.parse()` passes the model as `response_format`, so the API constrains "
+                "decoding to its JSON schema"
+            ),
+            (
+                "Field descriptions are the instructions the LLM sees. Optional fields are "
+                "`str | None` with no default, as strict mode requires"
+            ),
+            (
+                "StructuredExtractor works with any Pydantic model; the whole ~33k-character "
+                "document goes in one call"
+            ),
+            (
+                "Organizations are merged by name and locations by address, so many contracts "
+                "join up into one graph"
+            ),
+        ),
+        code="""
+extractor = StructuredExtractor(
+    llm, Contract,
+    PromptRepository().load("contract_extraction_system.txt"),
+    model="gpt-4o",
+)
+contract = extractor.extract(LICENSE_AGREEMENT_PATH.read_text())
+
+with KuzuCypherGraphStore(db_path) as store:
+    importer = ContractGraphImporter(store)
+    importer.create_schema(reset=True)
+    importer.import_contract(contract)
+
+# (:Organization)-[:HAS_PARTY {role}]->(:Contract)
+# (:Organization)-[:LOCATED_AT]->(:Location)
+""",
+        command=".venv/Scripts/python examples/structured_extraction_contracts.py",
+    ),
+    ChapterSlide(
+        title="ch07 · Microsoft-style GraphRAG",
+        subtitle="Re-implements `template/kg-rag/notebooks/ch07.ipynb` on Homer's Odyssey",
+        flow=(
+            "Chunk books\nOdysseyCorpus",
+            "Extract entities + rels",
+            "Import, merge by name",
+            "Summarize\ndescriptions",
+            "Louvain communities",
+            "Community reports",
+            "Embed entities",
+            "Global / local search",
+        ),
+        bullets=(
+            (
+                "No predefined schema: the LLM gets entity types (PERSON, GOD, LOCATION, …) and "
+                "returns tuple records that become ExtractedEntity and ExtractedRelationship"
+            ),
+            (
+                "DescriptionSummarizer merges each entity's descriptions; KuzuLouvainCommunityDetector "
+                "clusters entities; CommunityReporter writes a rated CommunityReport"
+            ),
+            (
+                "GlobalSearch is a map-reduce over reports rated 5 or more: KeyPoint scores, then one "
+                "merged answer"
+            ),
+            (
+                "LocalSearch embeds the question and finds the 5 nearest entities, then gathers their "
+                "chunks, community reports and strongest relationships (LocalContext)"
+            ),
+            "Only book 1 by default; `--books N` adds more, at 100–150 LLM calls per book",
+        ),
+        code="""
+(:Book)-[:HAS_CHUNK]->(:Chunk {text})
+(:Chunk)-[:MENTIONS]->(:Entity {name, type,
+         description[], summary, community_id, embedding})
+(:Entity)-[:RELATIONSHIP {description, strength}]->(:Entity)
+(:Entity)-[:SUMMARIZED_RELATIONSHIP {summary, weight}]->(:Entity)
+(:Entity)-[:IN_COMMUNITY]->(:Community {title, summary,
+         rating, rating_explanation})
+
+GlobalSearch(store, llm, model="gpt-4o").search(
+    "What is this story about?")
+LocalSearch(store, llm, embedder, model="gpt-4o").search(
+    "Who is Ulysses?")
+""",
+        command=".venv/Scripts/python examples/graphrag_odyssey.py --books 1",
+    ),
+    ChapterSlide(
+        title="ch08 · Evaluating the RAG system",
+        subtitle="Re-implements `template/kg-rag/notebooks/ch08.ipynb`: scores the ch05 agent",
+        flow=(
+            "Benchmark CSV\nquestion;cypher",
+            "Ground truth\nrun the Cypher",
+            "Agent.respond\nanswer + contexts",
+            "LLM judges\n3 metrics",
+            "Report\nCSV + samples JSON",
+        ),
+        bullets=(
+            (
+                "17 benchmark rows store Cypher, not answers (`load_benchmark` → BenchmarkCase), so "
+                "the ground truth follows the data"
+            ),
+            (
+                "AnswerCorrectness: statement F1 (StatementExtractor) × 0.75 + embedding cosine "
+                "similarity × 0.25"
+            ),
+            (
+                "ContextRecall: share of ground-truth facts the tools retrieved. Faithfulness: share "
+                "of the answer the contexts support"
+            ),
+            (
+                "The RAGAS metrics are re-implemented as Metric subclasses, without depending on "
+                "`ragas`. A failed question is recorded on its EvaluationSample, not hidden"
+            ),
+            (
+                "`--limit N`, `--rescore` (re-judge saved samples), `--decompose` (QueryDecomposer "
+                "splits each question first)"
+            ),
+        ),
+        code="""
+cases = load_benchmark(MOVIES_BENCHMARK_PATH)
+agent = build_movie_agent(llm, store, decompose=False)
+samples = BenchmarkRunner(store, agent.respond).run(cases)
+save_samples(samples, Path("logs/ch08_samples.json"))
+
+report = Evaluator([
+    AnswerCorrectness(llm, embedder, model="gpt-4o"),
+    ContextRecall(llm, model="gpt-4o"),
+    Faithfulness(llm, model="gpt-4o"),
+]).evaluate(samples)                 # EvaluationReport
+report.means(); report.failed()      # rows: ScoredSample
+""",
+        command=".venv/Scripts/python examples/evaluate_agent_movies.py --limit 5",
+    ),
+    CodeSlide(
+        title="Kuzu under the hood",
+        subtitle="The Kuzu-specific Cypher, all kept inside the `Kuzu*` classes",
+        bullets=(
+            (
+                "Tables must exist before data: every store and importer has a `create_schema()` or "
+                "creates its tables on open"
+            ),
+            (
+                "Vector index: HNSW graph with a sparse upper layer for long hops and a dense lower "
+                "layer; fast, approximate"
+            ),
+            "FTS index: an inverted index scored with BM25",
+            "Schema introspection replaces APOC: three catalog calls",
+            (
+                "Louvain runs from the statically linked `algo` extension, so no INSTALL or LOAD is "
+                "needed"
+            ),
+        ),
+        code_size=10.5,
+        code="""
+-- KuzuGraphStore
+CALL CREATE_VECTOR_INDEX('Chunk', 'chunk_vector_idx',
+    'embedding', metric := 'cosine');
+CALL QUERY_VECTOR_INDEX('Chunk', 'chunk_vector_idx',
+    $embedding, $k)
+RETURN node.text, distance;
+CALL CREATE_FTS_INDEX('Chunk', 'chunk_fts_idx', ['text']);
+CALL QUERY_FTS_INDEX('Chunk', 'chunk_fts_idx', $query)
+RETURN node.text, score;
+
+-- KuzuCypherGraphStore.get_schema()
+CALL show_tables() RETURN name, type;
+CALL table_info('Movie') RETURN name, type;
+CALL show_connection('DIRECTED') RETURN *;
+
+-- KuzuLouvainCommunityDetector
+CALL project_graph('entity_graph', ['Entity'], ['RELATIONSHIP']);
+CALL louvain('entity_graph') WITH node, louvain_id
+SET node.community_id = louvain_id;
+""",
+    ),
+    CodeSlide(
+        title="Testing and tooling",
+        subtitle="Fast and offline: no test calls OpenAI",
+        bullets=(
+            "`tests/` mirrors `src/graphrag/` package by package",
+            (
+                "ScriptedLLMClient returns queued responses in order and records every call, so a "
+                "test can check the prompts too"
+            ),
+            (
+                "FakeEmbedder looks vectors up in a dict (3 dimensions, small enough to write by "
+                "hand)"
+            ),
+            "Graph tests run against a real Kuzu database in `tmp_path`",
+            (
+                "ruff for lint and format (line length 100, `template/` excluded); mypy over "
+                "`graphrag`, which ships `py.typed`"
+            ),
+            "`tests/docs/test_repo_feature_deck.py` keeps this deck in sync with the code",
+        ),
+        code="""
+# tests/agent/test_router.py: queue the LLM's
+# tool choice, then check what the router does
+def test_route_rejects_unknown_tool(llm):
+    llm.tool_calls = [
+        [ToolCall("answer_given", {"answer": "x"})]]
+
+    with pytest.raises(ToolRoutingError,
+                       match="answer_given"):
+        ToolRouter(llm, [AnswerGivenTool()]).route("?")
+
+# run everything
+.venv/Scripts/python -m pytest
+.venv/Scripts/ruff check .
+.venv/Scripts/ruff format --check .
+.venv/Scripts/mypy
+""",
+    ),
+    CodeSlide(
+        title="Development workflow",
+        subtitle="Setup, the change process, and keeping this deck in sync",
+        bullets=(
+            "Every change starts with a plan, approved before any code is written (CLAUDE.md)",
+            (
+                "Dependencies: edit `requirements.in`, then `pip-compile`, then `pip-sync`. Never "
+                "hand-edit `requirements.txt`"
+            ),
+            "`pip-sync` removes the editable `graphrag` install, so reinstall it afterwards",
+            (
+                "A change ships with its tests, its `examples/README.md` section, and an update to "
+                "this deck"
+            ),
+            (
+                "This deck is generated: edit `SLIDES` in `docs/repo-feature/build_deck.py`, then "
+                "rebuild"
+            ),
+            (
+                "The sync test fails when a public name or example script is missing from the deck, "
+                "or when the deck names a class that no longer exists"
+            ),
+        ),
+        code_size=10.5,
+        code="""
+# one-time setup (Python 3.11)
+python -m venv .venv
+.venv/Scripts/pip install pip-tools
+.venv/Scripts/pip-sync requirements.txt
+.venv/Scripts/pip install -e . --no-deps
+cp .env.example .env        # set OPENAI_API_KEY
+
+# adding a dependency
+#   edit requirements.in, then:
+.venv/Scripts/pip-compile requirements.in
+.venv/Scripts/pip-sync requirements.txt
+.venv/Scripts/pip install -e . --no-deps
+
+# rebuild this deck
+.venv/Scripts/python docs/repo-feature/build_deck.py
+""",
+    ),
+)
+
+
+def build_deck(output: Path = DEFAULT_OUTPUT, slides: Sequence[SlideSpec] = SLIDES) -> Path:
+    builder = DeckBuilder()
+    builder.add_all(slides)
+    return builder.save(output)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_OUTPUT,
+        help=f"Where to write the .pptx (default: {DEFAULT_OUTPUT.name} next to this script).",
+    )
+    args = parser.parse_args()
+    path = build_deck(args.output)
+    print(f"Wrote {len(SLIDES)} slides to {path}")
+
+
+if __name__ == "__main__":
+    main()

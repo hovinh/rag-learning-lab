@@ -54,12 +54,44 @@ again later without touching callers.
   **pip-tools** (`pip-compile requirements.in`). Do not hand-edit
   `requirements.txt` — edit `requirements.in` and recompile.
 - Use `pip-sync requirements.txt` (or `python -m piptools sync
-  requirements.txt`) to make `.venv` match the lockfile exactly.
+  requirements.txt`) to make `.venv` match the lockfile exactly. `pip-sync`
+  uninstalls the editable `graphrag` package (it isn't in the lockfile), so
+  follow it with `pip install -e . --no-deps`.
 
 ## Coding standards
 
 See [docs/python.md](docs/python.md) for Python style and OOP conventions
 used throughout `src/`.
+
+## Workflow
+
+For every new change request, propose a plan and get explicit approval from
+the user before making any code changes.
+
+## Repo-feature deck: ALWAYS keep it in sync
+
+[docs/repo-feature/build_deck.py](docs/repo-feature/build_deck.py) builds a
+slide deck (`docs/repo-feature/repo-feature.pptx`) describing the whole repo:
+purpose, layout, architecture, every public class, every chapter's flow
+with a code example, and the dev workflow. It's the repo's reference
+overview, so it must never fall behind the code.
+
+- **Every new development updates the deck in the same change.** Adding,
+  renaming or removing a public class/function, package, example script,
+  CLI flag, dependency, or workflow step means editing `SLIDES` in
+  `build_deck.py`, then rebuilding with
+  `.venv/Scripts/python.exe docs/repo-feature/build_deck.py`.
+- Slide content is data (`SLIDES`); `DeckBuilder` only renders it. Change
+  the data, not the renderer, unless the layout itself needs to change.
+- [tests/docs/test_repo_feature_deck.py](tests/docs/test_repo_feature_deck.py)
+  enforces this: it fails when any public `graphrag` name or
+  `examples/*.py` script is missing from the deck, or when the deck names a
+  class or `.py` file that no longer exists. Fix the deck, never loosen
+  the test.
+- After changing the deck, check that the slides still render cleanly
+  (text not overflowing its box).
+- Only the script is committed. Don't commit the built `.pptx` until the
+  user says the deck is finalized.
 
 ## Secrets
 
