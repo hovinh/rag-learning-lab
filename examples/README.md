@@ -737,6 +737,14 @@ hadn't returned. The other two scores, and the per-question rows, show
 where it falls short. LLM judges aren't deterministic, so expect a few
 points of variation between runs.
 
+A second run, after the critic fix below, scored 0.537 / 0.794 / 0.955
+at 5.6 s per question, with no failed questions. "Who acted in top gun?"
+now scores like its capitalised twin (0.90). The faithfulness drop is the
+judge being literal: for "Who was born in 1965 and has directed a
+movie?" the generated Cypher filtered on the birth year without returning
+it, so "born in 1965" wasn't in the context and that statement was marked
+unsupported. Every weakness below showed up in both runs.
+
 - **Lookups score well.** Top Gun, The Matrix, Tom Hanks's movies, the
   "more than 5000 votes" filter and "born before 1940" all scored around
   0.9 correctness with full context recall.
