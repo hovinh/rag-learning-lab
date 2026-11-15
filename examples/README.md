@@ -422,3 +422,187 @@ CA). It's effective 1999-02-26 with a one-year, auto-renewing term, and
 governed by California law. `end_date` and `total_amount` come back null:
 the agreement has neither a fixed end date nor a single total value. The
 final query returns both parties with their role and location.
+
+## Chapter 7 — Microsoft-style GraphRAG
+
+Script: [graphrag_odyssey.py](graphrag_odyssey.py)
+(re-implements `template/kg-rag/notebooks/ch07.ipynb`).
+
+Run from the repo root (requires `OPENAI_API_KEY` in `.env`, see
+`.env.example`):
+
+```
+.venv/Scripts/python.exe examples/graphrag_odyssey.py --process-name ch07_graphrag_odyssey
+```
+
+Ch06 extracted into a schema written down in advance. Ch07 drops the
+schema: the LLM is only given a list of entity *types* and decides which
+entities and relationships a text contains. The graph is then summarized
+at several levels, which lets it answer two kinds of question that chunk
+retrieval handles badly: broad ones about the whole corpus, and ones about
+a specific entity spread across many passages.
+
+The corpus is Samuel Butler's translation of Homer's *Odyssey* from
+Project Gutenberg
+([`OdysseyCorpus`](../src/graphrag/datasets/odyssey.py), cached at
+`data/ch07-odyssey.txt`), split into its 24 books. As in the book, only
+the first is processed by default; `--books N` processes more, at roughly
+100–150 LLM calls per book. The script uses its own `_ch07` Kuzu database,
+reset on every run.
+
+### Indexing: building the graph
+
+1. **Extraction**
+   ([`EntityRelationshipExtractor`](../src/graphrag/extraction/entity_extractor.py)).
+   Each 1000-character chunk goes to the LLM with a few-shot prompt
+   (`graph_extraction.txt`) and the types PERSON, ORGANIZATION, LOCATION,
+   GOD, EVENT, CREATURE and WEAPON_OR_TOOL. The response is delimited
+   tuple records, `("entity";NAME;TYPE;description)` and
+   `("relationship";SOURCE;TARGET;description;strength)`, separated by
+   `|`, which `parse()` turns into `ExtractedEntity` /
+   `ExtractedRelationship`.
+2. **Import**
+   ([`EntityGraphImporter`](../src/graphrag/extraction/entity_graph_importer.py)).
+   Entities are merged by name, so one that appears in many chunks is one
+   node holding a *list* of descriptions, one per mention. Relationships
+   are created, not merged: every mention is its own edge.
+3. **Summarization**
+   ([`DescriptionSummarizer`](../src/graphrag/extraction/description_summarizer.py)).
+   An entity with several descriptions gets one LLM-written `summary`
+   (`description_summary.txt`); one with a single description keeps it.
+   Likewise, all the `RELATIONSHIP` edges between a pair collapse into one
+   `SUMMARIZED_RELATIONSHIP`, whose `weight` is the number of edges it
+   replaces.
+4. **Communities**
+   ([`KuzuLouvainCommunityDetector`](../src/graphrag/extraction/community_detector.py)).
+   Louvain clusters the entity graph into densely connected groups and
+   writes each entity's `community_id`.
+5. **Community reports**
+   ([`CommunityReporter`](../src/graphrag/extraction/community_reporter.py)).
+   For each community of two or more entities, the LLM reads its entities
+   and relationships and writes a JSON report (`community_report.txt`):
+   title, summary, a 0–10 importance `rating` and an explanation. The
+   report becomes a `Community` node that each member links to.
+6. **Entity embeddings**
+   ([`EntityEmbeddingIndexer`](../src/graphrag/retrieval/entity_index.py)).
+   Each entity summary is embedded, and an HNSW vector index is built over
+   them (see chapter 2 for how that index works).
+
+The resulting graph:
+
+```
+(:Book)-[:HAS_CHUNK]->(:Chunk {text})-[:MENTIONS]->(:Entity {name, type, description[], summary, community_id, embedding})
+(:Entity)-[:RELATIONSHIP {description, strength}]->(:Entity)
+(:Entity)-[:SUMMARIZED_RELATIONSHIP {summary, weight}]->(:Entity)
+(:Entity)-[:IN_COMMUNITY]->(:Community {title, summary, rating, rating_explanation})
+```
+
+### Querying: global and local search
+
+**Global search** ([`GlobalSearch`](../src/graphrag/retrieval/global_search.py))
+is for questions about the whole corpus, like "What is this story
+about?". No single chunk or entity answers that, but the community reports
+together cover the entire graph. It is a map-reduce:
+
+- **map**: each report rated at least 5 is sent with the question
+  (`global_map_system.txt`). The LLM returns JSON key points, each with a
+  0–100 importance score.
+- **reduce**: points scored 0 are dropped, the rest are sorted by score,
+  and one final call (`global_reduce_system.txt`) merges them into the
+  answer.
+
+**Local search** ([`LocalSearch`](../src/graphrag/retrieval/local_search.py))
+is for questions about particular entities, like "Who is Ulysses?". The
+question is embedded and the 5 nearest entity summaries are found. Around
+them it gathers the 3 chunks that mention the most of those entities, the
+3 highest-rated reports of their communities, and the 3 heaviest
+summarized relationships among them. That context
+(`LocalContext.to_prompt()`) goes to the LLM with `local_search_system.txt`.
+
+### How Louvain runs in Kuzu
+
+The book projects an in-memory graph and runs Louvain with Neo4j's GDS
+library (`gds.graph.project`, `gds.louvain.write`). Kuzu has the same two
+steps in its `algo` extension, statically linked into 0.11.3, so no
+`INSTALL`/`LOAD` is needed:
+
+```
+CALL project_graph('entity_graph', ['Entity'], ['RELATIONSHIP'])
+CALL louvain('entity_graph') WITH node, louvain_id SET node.community_id = ...
+```
+
+Louvain treats the edges as undirected, as the book's
+`undirectedRelationshipTypes: ['*']` does. Kuzu gives entities with no
+relationships `louvain_id = -1`. They're stored with no community rather
+than one of their own, which has the same effect as the book's filter on
+communities of at least two entities. The projected graph is dropped
+afterwards, so detection can run again.
+
+### Where this departs from the book
+
+- **Relationship summaries are actually stored.** The book calls
+  `import_rels_summary(neo4j_driver, summaries)` with the *entity*
+  summaries. None of the relationship summaries it generated is written,
+  so its cell 14 prints a single raw description.
+- **Local search finds chunks.** The book's `local_search_query` matches
+  `HAS_ENTITY` edges, but its import creates `MENTIONS`, so the chunk part
+  of its context is always empty.
+- **Ordering by properties that exist.** The book orders reports and
+  relationships by `rank` and `weight`, which nothing sets. Neo4j quietly
+  ignores the missing properties; Kuzu rejects them. Reports are ordered
+  by `rating` here, and relationships by `weight`, the number of mentions
+  they summarize.
+- **Ranked map points.** The reduce prompt says its reports are "ranked in
+  the descending order of importance", but the book passes the raw map
+  responses unsorted. Here score-0 ("I don't know") points are dropped
+  and the rest sorted, as in Microsoft's GraphRAG.
+- **Type as a property.** The book adds each entity's type as an extra
+  Neo4j label (`SET n:$(row.entity_type)`). A Kuzu node belongs to exactly
+  one table, so it's a `type` property, set from the first mention.
+- **Chunk ids include the book.** The book merges chunks on their index
+  within a book, so ids repeat across books. A Kuzu primary key must be
+  unique, so the id is `"<book>-<chunk>"`.
+- **No APOC or COLLECT subqueries.** A community's relationships come
+  from a plain match on edges with both ends in it, instead of
+  `apoc.path.subgraphAll`. Local search runs one query per context part
+  instead of one query with `COLLECT {}` subqueries, which Kuzu lacks.
+- **Direction for summarized relationships.** Kuzu's `MERGE` needs a
+  direction, so `SUMMARIZED_RELATIONSHIP` always points from the
+  alphabetically smaller name.
+- **Sturdier parsing.** The parser splits on the delimiters the prompt
+  specified rather than guessing them. A description that contains `;`
+  is kept whole instead of being dropped, and names are upper-cased so
+  "Ulysses" and "ULYSSES" merge. Malformed records are still skipped, as
+  in the book.
+- **JSON mode and errors.** Community reports and map responses use
+  `json_mode=True` rather than stripping code fences. Unusable JSON raises
+  `LLMResponseError`.
+- **Unextracted entities aren't embedded.** A relationship can name an
+  entity that wasn't extracted itself. That entity has no summary, and the
+  book would call `embed(None)` on it; here it's skipped.
+- **Resetting the schema.** Kuzu won't drop a table that a vector index
+  still references, so `create_schema(reset=True)` drops the indexes on
+  its tables first.
+
+### What a run looks like
+
+One book gives 22 chunks. A test run extracted 67 entities and 103
+relationships (the book's run had 62 and 91). 24 entities and 14
+relationship pairs needed an LLM summary. Louvain found 8 communities of
+2 to 21 entities (the book's run found 9). Their reports were rated
+between 3 ("Euryclea and Laertes Household") and 8.5 ("Ithaca and the
+Odyssey of Telemachus", "Aegisthus, Agamemnon, and Orestes"), so 5 of the
+8 passed the global-search threshold. Extraction isn't deterministic: an
+earlier run of the same code found 73 entities and 11 communities.
+
+Global search turned those 5 reports into 15 key points. Its answer
+covers Ulysses' journey home, Telemachus and the suitors in Ithaca,
+Neptune's anger, the Aegisthus/Agamemnon/Orestes subplot and Mentes and
+the Taphians. Book 1 alone covers all of that, so the summary is accurate
+to the part that was indexed. Local search's context started with the
+opening chunk ("Tell me, O Muse, of that ingenious hero..."). Its answer
+describes Ulysses as the hero of the Trojan War held by Calypso, kept
+from home by Neptune, with suitors courting Penelope. It cites
+`[Data: Entities (0); Relationships (0)]`-style references, but the
+context has no record ids, so those numbers are the list positions the
+LLM saw. The book's run has the same issue.
