@@ -23,7 +23,7 @@ Each notebook concept becomes a class with a narrow, explicit interface:
 | Agentic RAG: tool routing, critique loop (ch05)        | `Agent`, `QueryUpdater`, `ToolRouter`, `AnswerCritic`, `Tool` |
 | Structured extraction into a KG (ch06)                 | `Contract` models, `StructuredExtractor`, `ContractGraphImporter` |
 | LLM-driven KG construction, local/global search (ch07) | `EntityRelationshipExtractor`, `EntityGraphImporter`, `DescriptionSummarizer`, `KuzuLouvainCommunityDetector`, `CommunityReporter`, `EntityEmbeddingIndexer`, `GlobalSearch`, `LocalSearch` |
-| RAG evaluation against a benchmark (ch08)              | an evaluator over `benchmark_data.csv`               |
+| RAG evaluation against a benchmark (ch08)              | `BenchmarkRunner`, `Evaluator`, `Metric` (`AnswerCorrectness`, `ContextRecall`, `Faithfulness`), `StatementExtractor` |
 
 Guidelines:
 
@@ -51,13 +51,15 @@ src/
     ingestion/      # PdfLoader, TextChunker, SectionSplitter
     llm/             # LLMClient (OpenAI wrapper, incl. structured outputs), QueryRewriter
     graph/           # GraphStore/CypherGraphStore ABCs, Kuzu stores, Text2Cypher
-    datasets/        # sample data (MovieGraphSeeder + its CSVs, ch06's contract text, ch07's OdysseyCorpus)
+    datasets/        # sample data (MovieGraphSeeder + its CSVs, ch06's contract text, ch07's OdysseyCorpus,
+                     # ch08's movies benchmark)
     retrieval/       # Embedder, EntityEmbeddingIndexer, GlobalSearch, LocalSearch
     prompts/         # PromptRepository + prompt text files
     pipeline/        # Pipeline runner + steps shared across chapters
     agent/           # Agent, QueryUpdater, ToolRouter, AnswerCritic, Tool subclasses
     extraction/      # Pydantic extraction models, StructuredExtractor, ContractGraphImporter,
                      # ch07's entity extraction, summarization, communities and reports
+    evaluation/      # ch08: benchmark loading, BenchmarkRunner, LLM-judged Metrics, Evaluator
 tests/
   ...                # mirrors src/graphrag structure
 docs/

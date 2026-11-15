@@ -76,6 +76,21 @@ def test_run_gathers_critic_follow_ups_once(llm):
     assert "born 1964" in final_history[1]["content"]
 
 
+def test_respond_returns_the_gathered_answers_as_contexts(llm):
+    llm.completions = ['{"question": "Who acted in The Matrix?"}', '{"questions": []}', "Keanu."]
+    llm.tool_calls = [[ToolCall("movie_info_by_title", {"title": "The Matrix"})]]
+
+    response = make_agent(llm).respond("Who's in Matrix?")
+
+    assert response.answer == "Keanu."
+    assert response.contexts == [
+        (
+            "For the question: 'Who acted in The Matrix?', we have the answer: "
+            '\'[[{"title": "The Matrix", "cast": ["Keanu Reeves"]}]]\''
+        )
+    ]
+
+
 def test_run_starts_each_question_with_empty_history(llm):
     agent = make_agent(llm)
     for _ in range(2):

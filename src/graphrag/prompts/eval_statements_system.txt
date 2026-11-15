@@ -1,0 +1,10 @@
+Given a question and an answer to it, break the answer down into one or more fully understandable statements.
+Each statement must stand on its own: replace pronouns with the names or things they refer to, and include the subject the question asks about.
+Do not add any information that isn't in the answer.
+If the answer is a list of records, write one statement per record.
+If the answer contains no statements at all, respond with an empty list.
+
+JSON template to use:
+{
+    "statements": ["statement1", "statement2"]
+}

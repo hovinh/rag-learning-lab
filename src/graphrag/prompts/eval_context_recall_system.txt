@@ -1,0 +1,10 @@
+Given a question, a context and a reference answer, break the reference answer down into its individual facts (for a list of records, one fact per record).
+For each fact, decide whether it can be attributed to the given context: 1 if it can, 0 if it can't.
+Give a short reason for each classification.
+
+JSON template to use:
+{
+    "classifications": [
+        {"statement": "fact1", "reason": "why", "attributed": 1}
+    ]
+}

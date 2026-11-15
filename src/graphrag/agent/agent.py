@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 from logzero import logger
 
@@ -13,6 +14,12 @@ from graphrag.prompts import PromptRepository
 _SYSTEM_PROMPT = "agent_main_system.txt"
 _USER_PROMPT = "agent_main_user.txt"
 _TOOL_ANSWER_PROMPT = "agent_tool_answer.txt"
+
+
+@dataclass(frozen=True)
+class AgentResponse:
+    answer: str
+    contexts: list[str]
 
 
 class Agent:
@@ -47,6 +54,13 @@ class Agent:
         self._tool_answer_template = prompts.load(_TOOL_ANSWER_PROMPT)
 
     def run(self, question: str) -> str:
+        return self.respond(question).answer
+
+    def respond(self, question: str) -> AgentResponse:
+        """Like ``run``, but also returns the gathered tool answers the
+        final answer was written from -- what ch08 evaluates as the
+        retrieved context.
+        """
         history: list[Message] = []
         self._gather(question, history)
 
@@ -55,7 +69,7 @@ class Agent:
         if follow_ups:
             self._gather(" ".join(follow_ups), history)
 
-        return self._llm.complete(
+        answer = self._llm.complete(
             [
                 {"role": "system", "content": self._system_message},
                 *history,
@@ -63,6 +77,7 @@ class Agent:
             ],
             model=self._model,
         )
+        return AgentResponse(answer, [message["content"] for message in history])
 
     def _gather(self, question: str, history: list[Message]) -> None:
         updated = self._query_updater.update(question, history)

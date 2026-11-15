@@ -606,3 +606,154 @@ from home by Neptune, with suitors courting Penelope. It cites
 `[Data: Entities (0); Relationships (0)]`-style references, but the
 context has no record ids, so those numbers are the list positions the
 LLM saw. The book's run has the same issue.
+
+## Chapter 8 — Evaluating the RAG system
+
+Script: [evaluate_agent_movies.py](evaluate_agent_movies.py)
+(re-implements `template/kg-rag/notebooks/ch08.ipynb`).
+
+Run from the repo root (requires `OPENAI_API_KEY` in `.env`, see
+`.env.example`):
+
+```
+.venv/Scripts/python.exe examples/evaluate_agent_movies.py --process-name ch08_evaluate_agent_movies
+```
+
+Ch08 doesn't build anything new to retrieve with. It measures how well
+ch05's agent answers questions about the movies graph, so that a change
+to a prompt, a tool or the model can be judged by numbers rather than by
+reading a few answers. The script seeds the movies graph into its own
+`_ch08` Kuzu database, builds the same agent as ch05 (both scripts share
+[`movie_agent.py`](movie_agent.py)), runs the benchmark, and logs a score
+per question plus each metric's mean. The per-question table (the book's
+final `test_data` frame) is also written to
+`logs/<process_name>_results.csv`. Each question takes roughly 5 agent
+calls and 5 judge calls, so `--limit N` evaluates only the first N.
+
+### The benchmark
+
+[`movies_benchmark.csv`](../src/graphrag/datasets/benchmarks/movies_benchmark.csv)
+is the book's `benchmark_data.csv`: 17 `question;cypher` rows. Storing
+Cypher instead of answers keeps the benchmark cheap to maintain: each row
+holds the query that computes its expected answer, and
+[`BenchmarkRunner`](../src/graphrag/evaluation/runner.py) runs it against
+the graph to get the ground truth. If the data changes, the ground truth
+follows. The rows cover:
+
+- **Small talk and off-topic questions** ("Hello", "What is the weather
+  like in Spain?"). Their "Cypher" is just `RETURN "<expected behaviour>"`,
+  a way to put a description of the right answer into a table where every
+  row is a query.
+- **Graph questions**, from lookups ("Who acted in Top Gun?") to
+  aggregations ("Who acted in the most movies?"). Some are asked twice
+  with different capitalisation ("top gun", "tom Hanks") to test
+  robustness.
+- **An unanswerable question**, "Which movie has the most Oscars?". The
+  graph has no awards, so the right answer is to say the information is
+  missing.
+
+All 17 queries run unchanged on Kuzu against the seeded graph (a test
+checks this). The seeded graph is a subset of Neo4j's Movies demo, so the
+ground truths, and therefore the scores, aren't comparable to the book's.
+
+### The metrics
+
+The book scores with three metrics from the
+[RAGAS](https://docs.ragas.io/) library. They're re-implemented in
+[`graphrag/evaluation/metrics.py`](../src/graphrag/evaluation/metrics.py)
+as LLM-judge calls through `LLMClient`, following RAGAS's definitions,
+rather than by depending on `ragas`. That keeps out a large dependency
+tree (LangChain, `datasets`, pandas) and the churn in RAGAS's API (the
+`ragas.metrics.answer_correctness` + `Dataset` style the book uses is
+already legacy), and lets each metric be unit-tested with the scripted
+LLM fake. Each metric is a `Metric` subclass with a `score` method, so
+another can be added without touching the
+[`Evaluator`](../src/graphrag/evaluation/evaluator.py).
+
+Two of them first have
+[`StatementExtractor`](../src/graphrag/evaluation/statements.py) break a
+text into standalone statements ("Tom Cruise" becomes "Tom Cruise acted
+in Top Gun."), so each claim can be judged on its own:
+
+- **Answer correctness**: is the answer right? A judge sorts the answer's
+  and the ground truth's statements into true positives (in both), false
+  positives (only in the answer) and false negatives (only in the ground
+  truth), giving an F1 score of `TP / (TP + 0.5 × (FP + FN))`. The score
+  is `0.75 × F1 + 0.25 × cosine similarity` of the two texts' embeddings,
+  RAGAS's default weights.
+- **Context recall**: did retrieval find what the answer needed? The judge
+  splits the ground truth into facts and marks each as present in the
+  retrieved context or not; the score is the share present. This scores
+  the tools and routing, regardless of how the final answer is worded.
+- **Faithfulness**: does the answer stick to what was retrieved? The
+  score is the share of the answer's statements the context supports. A
+  low score means the agent said things it didn't look up, i.e.
+  hallucinated.
+
+The "retrieved context" is the agent's gathered tool answers ("For the
+question: '…', we have the answer: '…'"), as in the book. `Agent.run`
+returns only the final answer, so `Agent.respond` returns those contexts
+alongside it.
+
+The three metrics separate failures that a single "is it right?" score
+would mix up. A wrong answer with high context recall means the tools
+found the data but the final answer garbled it. Low context recall points
+at routing or text2cypher. Low faithfulness with high correctness means
+the answer is right, but not because of what was retrieved.
+
+### Where this departs from the book
+
+- **Failures are recorded, not hidden.** The book wraps `get_answer` in
+  `except Exception`, stores `None`, then `fillna("I don't know")`s it
+  into an answer that is judged like any other. Here the error is kept on
+  the sample and logged with its traceback, the sample gets no scores, and
+  the summary counts failed questions next to the means. A ground-truth
+  query that fails still raises: that's a broken benchmark, not a wrong
+  answer.
+- **"Not applicable" isn't zero.** If an answer makes no statements at
+  all, its faithfulness is `None` (RAGAS gives NaN) and is left out of the
+  mean rather than counted as 0. If a judge's response is unusable JSON,
+  only that score becomes `None` (and is logged), rather than the whole
+  run failing after every question has been answered and paid for.
+- **The right `get_answer`.** The notebook imports `get_answer` from
+  `ch07_tools`, but it's defined in `ch08_tools`.
+- **Ground truth as JSON.** The book stringifies each record
+  (`str(el.data())`, Python dict reprs). Here the rows are serialized as
+  JSON, keeping non-ASCII names readable ("Miloš Forman").
+- **No shared agent history.** ch08's `handle_user_input(input,
+  answers=[])` repeats ch05's mutable-default bug, so each benchmark
+  question would see every earlier question's answers. `Agent` starts
+  every question from an empty history (see ch05).
+
+### What a run looks like
+
+A full run (gpt-4o for the agent and the judges, about 3.5 minutes)
+scored mean answer correctness 0.521, context recall 0.781 and
+faithfulness 1.000, at 6.1 s per question, with 1 of 17 questions failed.
+Faithfulness was perfect: the agent never stated anything its tools
+hadn't returned. The other two scores, and the per-question rows, show
+where it falls short. LLM judges aren't deterministic, so expect a few
+points of variation between runs.
+
+- **Lookups score well.** Top Gun, The Matrix, Tom Hanks's movies, the
+  "more than 5000 votes" filter and "born before 1940" all scored around
+  0.9 correctness with full context recall.
+- **The query updater invents constraints.** It rewrote "In which movies
+  did Tom Hanks act in?" to "…between 1980 and 1990?" and "Who acted in
+  the most movies?" to "…as of 2023?". The first still found the films.
+  On the second, the critic asked six follow-ups (genre, region, cameos…),
+  and the final answer said the information was missing, even though the
+  first tool call had returned Tom Hanks with 8 movies (correctness 0.09).
+- **text2cypher misses** gave the "longest name" and "title starting with
+  'The'" questions zero context recall, and the agent correctly said it
+  didn't know.
+- **The one failure was the critic.** For "Who acted in top gun?" it
+  answered `{}` instead of `{"questions": []}`, and `AnswerCritic` raised
+  `LLMResponseError`. The runner recorded the failure and moved on.
+- **Correct refusals score low on correctness.** "Which movie has the
+  most Oscars?" was answered with "the information … is missing", which
+  is the expected behaviour, but it scored 0.08. The same happened to the
+  small-talk rows (0.04–0.43). A refusal yields no statements, so F1 is 0
+  and only the 0.25-weighted similarity is left. RAGAS behaves the same
+  way, so those rows' correctness should be read as "behaved as described"
+  or not by looking at the answer itself.

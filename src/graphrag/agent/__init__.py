@@ -1,4 +1,4 @@
-from graphrag.agent.agent import Agent
+from graphrag.agent.agent import Agent, AgentResponse
 from graphrag.agent.critic import AnswerCritic
 from graphrag.agent.errors import ToolRoutingError
 from graphrag.agent.movie_tools import MovieInfoByTitleTool, MoviesInfoByActorTool
@@ -14,6 +14,7 @@ from graphrag.agent.tools import (
 
 __all__ = [
     "Agent",
+    "AgentResponse",
     "AnswerCritic",
     "AnswerGivenTool",
     "MovieInfoByTitleTool",

@@ -1,0 +1,7 @@
+Question: {question}
+
+Answer statements:
+{answer_statements}
+
+Ground truth statements:
+{ground_truth_statements}

@@ -1,0 +1,7 @@
+Question: {question}
+
+Context:
+{context}
+
+Reference answer:
+{ground_truth}

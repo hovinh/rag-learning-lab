@@ -20,28 +20,14 @@ import io
 import sys
 
 import logzero
-from constants import (
-    DEFAULT_ANSWER_MODEL,
-    LOG_DIR,
-    MOVIES_CYPHER_EXAMPLES,
-    MOVIES_TERMINOLOGY,
-)
+from constants import LOG_DIR
 from dotenv import load_dotenv
 from logzero import logger
+from movie_agent import build_movie_agent
 from openai import OpenAI
 
-from graphrag.agent import (
-    Agent,
-    AnswerCritic,
-    AnswerGivenTool,
-    MovieInfoByTitleTool,
-    MoviesInfoByActorTool,
-    QueryUpdater,
-    Text2CypherTool,
-    ToolRouter,
-)
 from graphrag.datasets import MovieGraphSeeder
-from graphrag.graph import KuzuCypherGraphStore, Text2Cypher
+from graphrag.graph import KuzuCypherGraphStore
 from graphrag.llm import OpenAILLMClient
 from graphrag.settings import Settings
 
@@ -72,26 +58,7 @@ def main(process_name: str) -> None:
     with KuzuCypherGraphStore(db_path) as store:
         MovieGraphSeeder(store).seed()
 
-        text2cypher = Text2Cypher(
-            llm,
-            store.get_schema(),
-            terminology=MOVIES_TERMINOLOGY,
-            examples=MOVIES_CYPHER_EXAMPLES,
-            model=DEFAULT_ANSWER_MODEL,
-        )
-        tools = [
-            MovieInfoByTitleTool(store),
-            MoviesInfoByActorTool(store),
-            Text2CypherTool(text2cypher, store),
-            AnswerGivenTool(),
-        ]
-        agent = Agent(
-            llm,
-            QueryUpdater(llm, model=DEFAULT_ANSWER_MODEL),
-            ToolRouter(llm, tools, model=DEFAULT_ANSWER_MODEL),
-            AnswerCritic(llm, model=DEFAULT_ANSWER_MODEL),
-            model=DEFAULT_ANSWER_MODEL,
-        )
+        agent = build_movie_agent(llm, store)
 
         for question in QUESTIONS:
             logger.info(f"--- Question: {question} ---")

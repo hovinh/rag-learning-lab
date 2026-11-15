@@ -1,0 +1,10 @@
+Your task is to judge the faithfulness of a series of statements based on a given context.
+For each statement, return a verdict of 1 if the statement can be directly inferred from the context, or 0 if it can't.
+Judge every statement, in the order given, and give a short reason for each verdict.
+
+JSON template to use:
+{
+    "verdicts": [
+        {"statement": "statement1", "reason": "why", "verdict": 1}
+    ]
+}

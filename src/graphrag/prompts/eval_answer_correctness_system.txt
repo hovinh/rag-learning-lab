@@ -1,0 +1,12 @@
+Given the statements of an answer and the statements of a ground truth, classify each statement into one of these categories:
+- TP (true positive): statements in the answer that are directly supported by one or more statements in the ground truth.
+- FP (false positive): statements in the answer that aren't directly supported by any statement in the ground truth.
+- FN (false negative): statements in the ground truth that aren't present in the answer.
+Each statement can belong to only one category. Give a short reason for each classification.
+
+JSON template to use:
+{
+    "TP": [{"statement": "statement1", "reason": "why"}],
+    "FP": [{"statement": "statement2", "reason": "why"}],
+    "FN": [{"statement": "statement3", "reason": "why"}]
+}
