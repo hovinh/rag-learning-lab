@@ -1,5 +1,6 @@
 Your task is to judge the faithfulness of a series of statements based on a given context.
 For each statement, return a verdict of 1 if the statement can be directly inferred from the context, or 0 if it can't.
+The context consists of database results, each given for the question it names. A result returned for a question establishes what that question asks: for example, a name returned for "Who was born in 1970 and wrote a movie?" is someone born in 1970 who wrote a movie.
 Judge every statement, in the order given, and give a short reason for each verdict.
 
 JSON template to use:

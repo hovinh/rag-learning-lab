@@ -142,6 +142,13 @@ class AnswerCorrectness(Metric):
     def _f1(self, sample: EvaluationSample) -> float:
         answer_statements = self._statements.extract(sample.question, sample.answer)
         ground_truth_statements = self._statements.extract(sample.question, sample.ground_truth)
+        if not ground_truth_statements:
+            # A ground truth always holds something (even "This information
+            # is missing"), so this is the extractor failing; scoring it would
+            # turn every answer into a false positive.
+            raise LLMResponseError(
+                f"The ground truth gave no statements to compare with: {sample.ground_truth}"
+            )
         response = _complete_json(
             self._llm,
             self._model,

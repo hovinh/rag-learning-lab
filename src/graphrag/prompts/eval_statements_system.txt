@@ -2,7 +2,9 @@ Given a question and an answer to it, break the answer down into one or more ful
 Each statement must stand on its own: replace pronouns with the names or things they refer to, and include the subject the question asks about.
 Do not add any information that isn't in the answer.
 If the answer is a list of records, write one statement per record.
-If the answer contains no statements at all, respond with an empty list.
+The answer may be database rows in JSON, returned by a query that answers the question. Turn them into statements that answer the question: for example, for "How many people directed The Matrix?" the rows [{"directors": 2}] become "2 people directed The Matrix."
+A statement that information is missing, or a description of how to respond (for example "a greeting and an offer to help"), is a statement too: keep it, e.g. "The information about the movie's budget is missing."
+Only if the answer says nothing at all, respond with an empty list.
 
 JSON template to use:
 {

@@ -1,5 +1,6 @@
 Given a question, a context and a reference answer, break the reference answer down into its individual facts (for a list of records, one fact per record).
 For each fact, decide whether it can be attributed to the given context: 1 if it can, 0 if it can't.
+The context consists of database results, each given for the question it names. A result returned for a question establishes what that question asks: for example, a name returned for "Who was born in 1970 and wrote a movie?" is someone born in 1970 who wrote a movie.
 Give a short reason for each classification.
 
 JSON template to use:

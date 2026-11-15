@@ -685,7 +685,9 @@ reading a few answers. The script seeds the movies graph into its own
 per question plus each metric's mean. The per-question table (the book's
 final `test_data` frame) is also written to
 `logs/<process_name>_results.csv`. Each question takes roughly 5 agent
-calls and 5 judge calls, so `--limit N` evaluates only the first N.
+calls and 5 judge calls, so `--limit N` evaluates only the first N, and
+`--rescore` re-runs only the judges on saved answers (see "Re-scoring
+saved answers" below).
 
 ### The benchmark
 
@@ -784,10 +786,11 @@ the answer is right, but not because of what was retrieved.
 
 ### What a run looks like
 
-Six full runs (gpt-4o for the agent and the judges, 3–4 minutes each)
-track the fixes this chapter's evaluation led to. LLMs aren't
-deterministic, so expect a few points of variation between runs of the
-same code.
+Seven full runs (gpt-4o for the agent and the judges, 3–4 minutes each)
+track the fixes this chapter's evaluation led to. Runs 1–6 changed the
+agent; run 7's answers were then re-scored after fixing the judges. LLMs
+aren't deterministic, so expect a few points of variation between runs of
+the same code.
 
 | Run | Change since the previous run | Correctness | Context recall | Faithfulness | Latency | Failed |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -797,9 +800,11 @@ same code.
 | 4 | text2cypher: Kuzu hints, missing-information reply, one correction | 0.665 | 0.971 | 0.885 | 4.1 s | 0/17 |
 | 5 | text2cypher: relationships count as data | 0.706 | 0.912 | 1.000 | 3.9 s | 0/17 |
 | 6 | final answer trusts the tool answers | 0.708 | 0.971 | 1.000 | 3.9 s | 0/17 |
+| 7 | none (baseline for the judge fix) | 0.707 | 0.971 | 1.000 | 4.1 s | 0/17 |
+| 7, re-scored | judges fixed; same answers as run 7 | **0.825** | **1.000** | **1.000** | — | 0/17 |
 
-In runs 5 and 6 every question about the graph was answered correctly,
-and so was the unanswerable one. What each step showed:
+From run 5 on, every question about the graph was answered correctly, and
+so was the unanswerable one. What each step showed:
 
 - **Run 1: a critic reply crashed one question.** For "Who acted in top
   gun?" the critic answered `{}` instead of `{"questions": []}`, and
@@ -841,20 +846,6 @@ and so was the unanswerable one. What each step showed:
   (10 and 4). The one-correction retry never triggered in runs 4–5,
   because the hints avoided the error in the first place; its unit tests
   cover it.
-- **The judge is literal.** "Who was born in 1965 and has directed a
-  movie?" got 0.5 context recall in every run (and faithfulness in two): the
-  generated Cypher filters on the birth year without returning it, so
-  "born in 1965" isn't in the context. "How many movies did Tom Hanks
-  appear in?" scored 0.09–0.14 correctness in every run although the
-  answer, 8, was right: the judge didn't match the answer's statements to
-  the one-row ground truth's. Run 4's faithfulness dip is the same kind of
-  noise: it gave 0 to "Tom Hanks, with 8 movies", which was exactly what
-  the tool had returned.
-- **Correct refusals score low on correctness.** A refusal ("the
-  information is missing") or small-talk reply yields no factual
-  statements, so F1 is 0 and only the 0.25-weighted similarity is left
-  (0.04–0.61). RAGAS behaves the same way, so for those rows, look at the
-  answer itself to see whether it behaved as described.
 - **Run 6: an overly cautious final answer.** Up to run 5, the final
   answer sometimes said information was missing when the tool results
   contained it. In run 4 the longest-name query returned "Michael Clarke
@@ -867,6 +858,59 @@ and so was the unanswerable one. What each step showed:
   happened to hit the problem; run 6 shows the change didn't cost
   anything, with the refusals (Oscars, small talk, weather) unchanged. The
   fix shows in ch05's example, which now names *Reloaded*.
-- **Still open: the judge.** "How many movies did Tom Hanks appear in?"
-  still scores 0.13 although the answer ("Tom Hanks appeared in 8
-  movies.") is exactly right; see "The judge is literal" above.
+- **Run 7: the judges were wrong too.** Runs 1–6 scored some right
+  answers low in every run. Tracing the judges' intermediate steps showed
+  why:
+  - The ground truth is the raw query result, e.g. `[{"numberOfMovies":
+    8}]`. The statement extractor usually turned that into *no*
+    statements, so "Tom Hanks appeared in 8 movies." counted as a false
+    positive (F1 0, correctness 0.09–0.14 in every run).
+  - The extractor also dropped refusals and descriptions of behaviour
+    ("This information is missing", "greeting and reminder…") as having
+    "no statements", so correct refusals and small-talk replies got F1 0.
+  - Context recall and faithfulness wouldn't credit a fact a result
+    implies: given "For the question 'Who was born in 1965 and has
+    directed…?', we have the answer: [Lana Wachowski]", the judge said
+    "born in 1965" wasn't in the context (0.5 in every run).
+  - The answer-correctness classifier matched wording, not meaning: "I
+    can only answer questions about movies and their cast" wasn't a match
+    for "irrelevant question as we can answer questions related to movies
+    and their cast only".
+
+  The fixes are prompt changes: the extractor turns query rows into
+  statements answering the question and keeps refusals and behaviour
+  descriptions; context recall and faithfulness are told that a result
+  establishes what its question asks; and the classifier judges by
+  meaning, with "a different fact, name or number is never supported".
+  If a ground truth still yields no statements, `AnswerCorrectness` now
+  raises `LLMResponseError` (logged, recorded as `None`) rather than
+  reporting the answer as wrong.
+
+  To measure only the judges, run 7's answers were saved and re-scored
+  with `--rescore` (below). Only the rows the judge had wrong changed:
+  Tom Hanks's count 0.13 → 0.88, the weather refusal 0.16 → 0.91, the
+  Oscars refusal 0.11 → 0.61, the 1965 context recall 0.5 → 1.0, and the
+  three refusals now get a faithfulness score instead of `n/a`. A control
+  set of five deliberately wrong answers (a wrong count, a wrong cast,
+  refusing an answerable question, answering the unanswerable one, an
+  off-topic reply to "Hello") and one half-right cast scored exactly the
+  same before and after the classifier change (0.01–0.11, and 0.62 for
+  the half-right one), so the judge got fairer without getting more
+  lenient.
+- **What the judge still does.** The Oscars refusal stops at 0.61
+  because "The database has no information about Oscars" is classed as an
+  unsupported extra next to "the information is missing". "Hello" varies
+  between runs (0.13 in the re-score, though the same classification
+  matched when traced step by step). Small-talk and refusal rows are
+  still best checked by reading the answer.
+
+### Re-scoring saved answers
+
+Every run also writes its answered samples, contexts included, to
+`logs/<process_name>_samples.json`. To try a change to a metric or a judge
+prompt on the same answers, without asking the agent again (judge calls
+only, so it's quicker and cheaper):
+
+```
+.venv/Scripts/python.exe examples/evaluate_agent_movies.py --process-name ch08_rescore --rescore logs/ch08_evaluate_agent_movies_samples.json
+```

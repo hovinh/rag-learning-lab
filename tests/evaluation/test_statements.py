@@ -27,3 +27,15 @@ def test_extract_rejects_unusable_responses(llm, response):
 
     with pytest.raises(LLMResponseError):
         StatementExtractor(llm).extract("?", "answer")
+
+
+def test_extract_prompt_covers_query_rows_and_refusals(llm):
+    # Without these, a ground truth like [{"numberOfMovies": 8}] or "This
+    # information is missing" usually gave no statements at all.
+    llm.completions = ['{"statements": []}']
+
+    StatementExtractor(llm).extract("?", "[]")
+
+    system = llm.complete_calls[0]["messages"][0]["content"]
+    assert "database rows in JSON" in system
+    assert "A statement that information is missing" in system

@@ -3,6 +3,7 @@ from graphrag.evaluation.evaluator import EvaluationReport, Evaluator, ScoredSam
 from graphrag.evaluation.metrics import AnswerCorrectness, ContextRecall, Faithfulness, Metric
 from graphrag.evaluation.models import BenchmarkCase, EvaluationSample
 from graphrag.evaluation.runner import BenchmarkRunner, Responder
+from graphrag.evaluation.samples_file import load_samples, save_samples
 from graphrag.evaluation.statements import StatementExtractor
 
 __all__ = [
@@ -19,4 +20,6 @@ __all__ = [
     "ScoredSample",
     "StatementExtractor",
     "load_benchmark",
+    "load_samples",
+    "save_samples",
 ]

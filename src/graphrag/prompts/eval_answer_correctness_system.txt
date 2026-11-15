@@ -3,6 +3,7 @@ Given the statements of an answer and the statements of a ground truth, classify
 - FP (false positive): statements in the answer that aren't directly supported by any statement in the ground truth.
 - FN (false negative): statements in the ground truth that aren't present in the answer.
 Each statement can belong to only one category. Give a short reason for each classification.
+Judge by meaning, not wording: a statement that says the same thing in other words, or restates what a ground-truth statement implies, is supported. A ground-truth statement that describes how to respond (for example "a greeting and an offer to help") is present when the answer responds that way. A different fact, name or number is never supported.
 
 JSON template to use:
 {

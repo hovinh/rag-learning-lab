@@ -110,8 +110,18 @@ def test_answer_correctness_of_an_exact_match_is_one(llm, embedder):
     assert AnswerCorrectness(llm, embedder).score(sample) == pytest.approx(1.0)
 
 
+def test_answer_correctness_rejects_a_ground_truth_without_statements(llm, embedder):
+    llm.completions = ['{"statements": ["Tom Hanks appeared in 8 movies."]}', '{"statements": []}']
+
+    with pytest.raises(LLMResponseError, match="ground truth gave no statements"):
+        AnswerCorrectness(llm, embedder).score(make_sample())
+    # Nothing is classified or embedded once the ground truth is unusable.
+    assert len(llm.complete_calls) == 2
+    assert embedder.calls == []
+
+
 def test_answer_correctness_rejects_missing_categories(llm, embedder):
-    llm.completions = ['{"statements": []}', '{"statements": []}', '{"TP": []}']
+    llm.completions = ['{"statements": []}', '{"statements": ["a"]}', '{"TP": []}']
 
     with pytest.raises(LLMResponseError):
         AnswerCorrectness(llm, embedder).score(make_sample())
@@ -120,3 +130,36 @@ def test_answer_correctness_rejects_missing_categories(llm, embedder):
 def test_answer_correctness_weights_must_sum_to_one(llm, embedder):
     with pytest.raises(ValueError):
         AnswerCorrectness(llm, embedder, factuality_weight=0.5, similarity_weight=0.25)
+
+
+def test_judges_read_results_as_answers_to_their_questions(llm):
+    # Without this, "born in 1965" wasn't credited to a name returned for
+    # "Who was born in 1965 and has directed a movie?".
+    llm.completions = [
+        '{"statements": ["s"]}',
+        judgements("verdicts", "verdict", 1),
+        judgements("classifications", "attributed", 1),
+    ]
+
+    Faithfulness(llm).score(make_sample())
+    ContextRecall(llm).score(make_sample())
+
+    rule = "A result returned for a question establishes what that question asks"
+    for call in llm.complete_calls[1:]:
+        assert rule in call["messages"][0]["content"]
+
+
+def test_answer_correctness_judges_by_meaning(llm, embedder):
+    sample = make_sample()
+    llm.completions = [
+        '{"statements": ["a"]}',
+        '{"statements": ["a"]}',
+        '{"TP": [{"statement": "a", "reason": "r"}], "FP": [], "FN": []}',
+    ]
+    embedder.vectors = {sample.answer: [1.0, 0.0, 0.0], sample.ground_truth: [1.0, 0.0, 0.0]}
+
+    AnswerCorrectness(llm, embedder).score(sample)
+
+    system = llm.complete_calls[2]["messages"][0]["content"]
+    assert "Judge by meaning, not wording" in system
+    assert "A different fact, name or number is never supported." in system

@@ -7,6 +7,7 @@ every answer: answer correctness, context recall, and faithfulness.
 See examples/README.md for the metrics and where this departs from the
 book. Requires OPENAI_API_KEY in .env (see .env.example). Every question
 costs several agent and judge calls, so --limit runs only the first N.
+Answered samples are saved, and --rescore re-runs only the judges on them.
 Run from the repo root:
 
     .venv/Scripts/python.exe examples/evaluate_agent_movies.py \\
@@ -37,6 +38,8 @@ from graphrag.evaluation import (
     Evaluator,
     Faithfulness,
     load_benchmark,
+    load_samples,
+    save_samples,
 )
 from graphrag.graph import KuzuCypherGraphStore
 from graphrag.llm import OpenAILLMClient
@@ -44,7 +47,7 @@ from graphrag.retrieval import OpenAIEmbedder
 from graphrag.settings import Settings
 
 
-def main(process_name: str, limit: int | None) -> None:
+def main(process_name: str, limit: int | None, rescore: Path | None) -> None:
     # Windows defaults stdout/the log file to the cp1252 codepage, which
     # can't encode some names in the movies dataset (e.g. "Miloš Forman");
     # force UTF-8 so those log lines don't get silently dropped.
@@ -60,15 +63,23 @@ def main(process_name: str, limit: int | None) -> None:
     openai_client = OpenAI(api_key=settings.openai_api_key)
     llm = OpenAILLMClient(openai_client)
 
-    cases = load_benchmark(MOVIES_BENCHMARK_PATH)[:limit]
-
-    # Kept apart from the other chapters' databases: seeding drops and
-    # recreates its tables on every run.
-    db_path = settings.kuzu_db_path.with_name(f"{settings.kuzu_db_path.name}_ch08")
-    with KuzuCypherGraphStore(db_path) as store:
-        MovieGraphSeeder(store).seed()
-        agent = build_movie_agent(llm, store)
-        samples = BenchmarkRunner(store, agent.respond).run(cases)
+    if rescore is not None:
+        # Judges only: score answers an earlier run saved, so a change to a
+        # metric is measured on the same answers.
+        samples = load_samples(rescore)[:limit]
+        logger.info(f"Re-scoring {len(samples)} samples from {rescore}")
+    else:
+        cases = load_benchmark(MOVIES_BENCHMARK_PATH)[:limit]
+        # Kept apart from the other chapters' databases: seeding drops and
+        # recreates its tables on every run.
+        db_path = settings.kuzu_db_path.with_name(f"{settings.kuzu_db_path.name}_ch08")
+        with KuzuCypherGraphStore(db_path) as store:
+            MovieGraphSeeder(store).seed()
+            agent = build_movie_agent(llm, store)
+            samples = BenchmarkRunner(store, agent.respond).run(cases)
+        samples_path = LOG_DIR / f"{process_name}_samples.json"
+        save_samples(samples, samples_path)
+        logger.info(f"Answered samples written to {samples_path}")
 
     evaluator = Evaluator(
         [
@@ -138,5 +149,14 @@ if __name__ == "__main__":
         default=None,
         help="Evaluate only the first N benchmark questions (default: all 17).",
     )
+    parser.add_argument(
+        "--rescore",
+        type=Path,
+        default=None,
+        help=(
+            "Skip the agent and only re-score the answers in a samples file an "
+            "earlier run wrote (logs/<process_name>_samples.json)."
+        ),
+    )
     args = parser.parse_args()
-    main(args.process_name, args.limit)
+    main(args.process_name, args.limit, args.rescore)
