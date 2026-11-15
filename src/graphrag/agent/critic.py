@@ -4,7 +4,7 @@ from collections.abc import Sequence
 
 from graphrag.llm.client import LLMClient, Message, OpenAILLMClient
 from graphrag.llm.errors import LLMResponseError
-from graphrag.llm.json_response import load_json_field
+from graphrag.llm.json_response import load_json_field, load_json_object
 from graphrag.prompts import PromptRepository
 
 _SYSTEM_PROMPT = "agent_answer_critique_system.txt"
@@ -34,7 +34,7 @@ class AnswerCritic:
         """Returns an empty list if the question is already answered.
 
         Raises ``LLMResponseError`` if the response has no list of
-        questions.
+        questions (an empty object aside).
         """
         response = self._llm.complete(
             [
@@ -45,6 +45,10 @@ class AnswerCritic:
             model=self._model,
             json_mode=True,
         )
+        # The LLM sometimes says "nothing missing" as a bare {} rather
+        # than {"questions": []} (ch08's benchmark run hit this).
+        if load_json_object(response) == {}:
+            return []
         questions = load_json_field(response, "questions")
         if not isinstance(questions, list) or not all(isinstance(q, str) for q in questions):
             raise LLMResponseError(f"'questions' isn't a list of strings: {response}")

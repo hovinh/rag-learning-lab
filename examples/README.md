@@ -311,7 +311,9 @@ To add a tool, subclass `Tool` and pass an instance to `ToolRouter`.
   so the second question silently sees the first one's answers.
 - **Bad JSON raises.** The book prints "Error decoding JSON" and returns
   `[]`, even where a question string is expected. Here unusable JSON
-  raises `LLMResponseError`.
+  raises `LLMResponseError`. The one exception is the critic answering a
+  bare `{}`, which LLMs sometimes do for "nothing missing": that's read as
+  no follow-up questions (ch08's benchmark run turned this up).
 - **Final answer returned whole**, not streamed, so `Agent.run()` returns
   a plain string.
 
@@ -749,7 +751,9 @@ points of variation between runs.
   didn't know.
 - **The one failure was the critic.** For "Who acted in top gun?" it
   answered `{}` instead of `{"questions": []}`, and `AnswerCritic` raised
-  `LLMResponseError`. The runner recorded the failure and moved on.
+  `LLMResponseError`. The runner recorded the failure and moved on. Since
+  then, `AnswerCritic` reads a bare `{}` as "no follow-ups", and its
+  prompt spells out the empty reply.
 - **Correct refusals score low on correctness.** "Which movie has the
   most Oscars?" was answered with "the information … is missing", which
   is the expected behaviour, but it scored 0.08. The same happened to the

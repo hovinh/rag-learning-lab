@@ -27,7 +27,15 @@ def test_critique_returns_empty_list_when_answered(llm):
     assert AnswerCritic(llm).critique("?", []) == []
 
 
-@pytest.mark.parametrize("response", ["not json", "{}", '{"questions": "x"}', '{"questions": [1]}'])
+def test_critique_treats_empty_object_as_answered(llm):
+    llm.completions = ["{}"]
+
+    assert AnswerCritic(llm).critique("?", []) == []
+
+
+@pytest.mark.parametrize(
+    "response", ["not json", '{"other": 1}', '{"questions": "x"}', '{"questions": [1]}']
+)
 def test_critique_rejects_unusable_response(llm, response):
     llm.completions = [response]
 
