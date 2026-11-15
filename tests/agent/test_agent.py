@@ -91,6 +91,20 @@ def test_respond_returns_the_gathered_answers_as_contexts(llm):
     ]
 
 
+def test_final_answer_prompt_points_at_the_tool_answers(llm):
+    llm.completions = ['{"question": "q"}', '{"questions": []}', "answer"]
+    llm.tool_calls = [[ToolCall("respond", {"answer": "a"})]]
+
+    make_agent(llm).run("q")
+
+    system = llm.complete_calls[-1]["messages"][0]["content"]
+    # Quotes agent_tool_answer.txt's wording, which the history uses.
+    assert "For the question: '...', we have the answer: '...'" in system
+    assert "the database's complete result" in system
+    assert "Don't call information missing because you expected more of it." in system
+    assert "Only say information is missing when none of these results contains it" in system
+
+
 def test_run_starts_each_question_with_empty_history(llm):
     agent = make_agent(llm)
     for _ in range(2):

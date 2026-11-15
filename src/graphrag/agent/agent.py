@@ -11,6 +11,8 @@ from graphrag.agent.router import ToolRouter
 from graphrag.llm.client import LLMClient, Message, OpenAILLMClient
 from graphrag.prompts import PromptRepository
 
+# The final-answer system prompt quotes agent_tool_answer.txt's wording to
+# point at the gathered answers, so change the two together.
 _SYSTEM_PROMPT = "agent_main_system.txt"
 _USER_PROMPT = "agent_main_user.txt"
 _TOOL_ANSWER_PROMPT = "agent_tool_answer.txt"

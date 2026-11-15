@@ -350,6 +350,22 @@ To add a tool, subclass `Tool` and pass an instance to `ToolRouter`.
   `Text2Cypher.correct()` and runs the corrected query
   (`max_corrections=1`; `0` restores the book's behaviour). If that fails
   too, the error text goes back to the agent as before.
+- **The final answer trusts the tool answers.** The book's final prompt
+  says to use only "the information provided to you in the prompt" and
+  to say when it's missing. But the information arrives as earlier "For
+  the question …, we have the answer …" messages, and the model kept
+  treating it as unconfirmed: it called Keanu Reeves's other movies
+  "missing" with *The Matrix Reloaded* in the results, and called the
+  longest actor name missing when the query had returned it. Three
+  lines added to `agent_main_system.txt` say where the information is,
+  that each result is the database's complete answer to its question,
+  and that a short answer is still an answer. Errors and
+  `missing_information` results still produce "missing". Replaying the
+  final call on recorded histories, the book's prompt gave the right
+  answer 0 times in 10 (two histories); the new one gave it 15 times in
+  15 (those two plus a third), and still refused all 10 times on a
+  `missing_information` result and on a query error. The prompt quotes
+  `agent_tool_answer.txt`'s wording, so the two change together.
 - **Final answer returned whole**, not streamed, so `Agent.run()` returns
   a plain string.
 
@@ -359,10 +375,13 @@ On the first question, the updater names Keanu Reeves, and the router
 calls *both* `movie_info_by_title("The Matrix")` and
 `movies_info_by_actor("Keanu Reeves")` in one turn. The critic still asks
 about his other movies, so a second round runs. The curated dataset only
-has him in *The Matrix* and *The Matrix Reloaded*, so the answer can be
-thin: in test runs the model said his other movies were "missing" instead
-of naming *Reloaded*. The tools returned the right rows; this is the final
-LLM call reading them conservatively. The second question goes to
+has him in *The Matrix* and *The Matrix Reloaded*, so the answer is
+short. With the book's final prompt the model usually said his other
+movies were "missing" instead of naming *Reloaded*, even though the tools
+returned the right rows. With the final-answer change above it names
+*Reloaded* ("Another movie he appeared in is 'The Matrix Reloaded'"), or,
+when the critic's follow-up already asked for movies besides both films,
+lists the two and says the data holds no others. The second question goes to
 `text2cypher`, which returns 10 directors and 4 producers, matching the
 seeded graph. The critic is satisfied, so there's no second round.
 
@@ -765,7 +784,7 @@ the answer is right, but not because of what was retrieved.
 
 ### What a run looks like
 
-Five full runs (gpt-4o for the agent and the judges, 3–4 minutes each)
+Six full runs (gpt-4o for the agent and the judges, 3–4 minutes each)
 track the fixes this chapter's evaluation led to. LLMs aren't
 deterministic, so expect a few points of variation between runs of the
 same code.
@@ -777,9 +796,10 @@ same code.
 | 3 | query-update and critic prompts tightened; critic sees the schema | 0.651 | 0.912 | 1.000 | 4.6 s | 0/17 |
 | 4 | text2cypher: Kuzu hints, missing-information reply, one correction | 0.665 | 0.971 | 0.885 | 4.1 s | 0/17 |
 | 5 | text2cypher: relationships count as data | 0.706 | 0.912 | 1.000 | 3.9 s | 0/17 |
+| 6 | final answer trusts the tool answers | 0.708 | 0.971 | 1.000 | 3.9 s | 0/17 |
 
-In run 5 every question about the graph was answered correctly, and so
-was the unanswerable one. What each step showed:
+In runs 5 and 6 every question about the graph was answered correctly,
+and so was the unanswerable one. What each step showed:
 
 - **Run 1: a critic reply crashed one question.** For "Who acted in top
   gun?" the critic answered `{}` instead of `{"questions": []}`, and
@@ -835,10 +855,18 @@ was the unanswerable one. What each step showed:
   statements, so F1 is 0 and only the 0.25-weighted similarity is left
   (0.04–0.61). RAGAS behaves the same way, so for those rows, look at the
   answer itself to see whether it behaved as described.
-- **Still open: an overly cautious final answer.** Sometimes the final
-  answer says information is missing when the tool results contain it. In
-  run 4 the longest-name query returned "Michael Clarke Duncan" and the
-  answer still said it was missing. In ch05's example, *The Matrix
-  Reloaded* is often not offered as Keanu Reeves's "other movie" (see
-  ch05). That's the book's final-answer prompt (`agent_main_system.txt`),
-  which no change here touched.
+- **Run 6: an overly cautious final answer.** Up to run 5, the final
+  answer sometimes said information was missing when the tool results
+  contained it. In run 4 the longest-name query returned "Michael Clarke
+  Duncan" and the answer still called it missing; in ch05's example *The
+  Matrix Reloaded* was usually not offered as Keanu Reeves's "other movie".
+  The book's final-answer prompt (`agent_main_system.txt`) didn't treat
+  the gathered tool answers as the information it should use. Run 6's
+  prompt says it should (see ch05 for the wording and the replay test).
+  The averages barely moved, because in run 5 no benchmark question
+  happened to hit the problem; run 6 shows the change didn't cost
+  anything, with the refusals (Oscars, small talk, weather) unchanged. The
+  fix shows in ch05's example, which now names *Reloaded*.
+- **Still open: the judge.** "How many movies did Tom Hanks appear in?"
+  still scores 0.13 although the answer ("Tom Hanks appeared in 8
+  movies.") is exactly right; see "The judge is literal" above.
