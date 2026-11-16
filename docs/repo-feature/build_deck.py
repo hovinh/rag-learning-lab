@@ -746,6 +746,65 @@ SLIDES: tuple[SlideSpec, ...] = (
         ),
     ),
     CodeSlide(
+        title="Cypher vs SQL: the same question",
+        subtitle="`movies_info_by_actor`: an actor's movies with full cast and directors",
+        code_size=10.5,
+        code=(
+            "// Cypher (movie_tools.py)\n"
+            "MATCH (a:Person)-[:ACTED_IN]->(m:Movie)\n"
+            "WHERE lower(a.name) CONTAINS $actor\n"
+            "OPTIONAL MATCH (m)<-[:ACTED_IN]-(c:Person)\n"
+            "OPTIONAL MATCH (m)<-[:DIRECTED]-(d:Person)\n"
+            "RETURN m.title,\n"
+            "       collect(DISTINCT c.name) AS `cast`,\n"
+            "       collect(DISTINCT d.name) AS directors\n"
+            "\n"
+            "-- SQL over person / movie / acted_in / directed\n"
+            "SELECT m.title,\n"
+            "       array_agg(DISTINCT c.name) AS cast_names,\n"
+            "       array_agg(DISTINCT d.name) AS directors\n"
+            "FROM person a\n"
+            "JOIN acted_in ai      ON ai.person_id = a.id\n"
+            "JOIN movie m          ON m.id = ai.movie_id\n"
+            "LEFT JOIN acted_in ci ON ci.movie_id = m.id\n"
+            "LEFT JOIN person c    ON c.id = ci.person_id\n"
+            "LEFT JOIN directed di ON di.movie_id = m.id\n"
+            "LEFT JOIN person d    ON d.id = di.person_id\n"
+            "WHERE lower(a.name) LIKE '%' || :actor || '%'\n"
+            "GROUP BY m.id, m.title;"
+        ),
+        bullets=(
+            "Each arrow `-[:ACTED_IN]->` becomes two joins through a link table",
+            "Undirected edges: `(s)-[r]-(t)` instead of a `UNION` of both directions "
+            "(`DescriptionSummarizer`)",
+            "Variable-length paths: `-[*1..3]->` instead of a recursive CTE",
+            "Multi-hop retrieval (chunk → entity → community in `LocalSearch`) is one more "
+            "pattern per hop, not more joins",
+        ),
+    ),
+    BulletSlide(
+        title="Why Cypher instead of SQL",
+        subtitle="Inherited from the book, kept because the data is a graph",
+        bullets=(
+            "Inherited from the book",
+            "  ch04–ch08 are written in Cypher; Kuzu speaks it, so queries port with small "
+            "dialect fixes (backticked `cast`, directed `MERGE`, no APOC)",
+            "Relationship-shaped questions",
+            "  Chunk → entity → community and actor → movie ← director read as patterns, "
+            "not join chains",
+            "Easier for the LLM to write (text2cypher)",
+            "  The schema prompt is just `(:Person)-[:ACTED_IN]->(:Movie)`, with no join keys "
+            "to guess; `Text2Cypher.correct()` retries with the database's error message",
+            "Trade-offs",
+            "  Kuzu stores node and rel tables underneath: this picks a query language, "
+            "not a storage model",
+            "  Cypher dialects differ more than SQL's, and SQL is far more widely known",
+            "  Flat aggregations (community sizes) read the same either way",
+            "  `CypherGraphStore` commits to Cypher, so a SQL backend would change the "
+            "interface too",
+        ),
+    ),
+    CodeSlide(
         title="Repository layout",
         code_size=12.5,
         code="""
