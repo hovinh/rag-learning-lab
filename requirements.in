@@ -9,7 +9,6 @@ openai
 python-dotenv
 tiktoken
 pydantic
-logzero
 
 # docs (builds docs/repo-feature/repo-feature.pptx)
 python-pptx

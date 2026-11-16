@@ -18,13 +18,12 @@ LLM calls per book processed. Run from the repo root:
 from __future__ import annotations
 
 import argparse
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import logzero
-from constants import DEFAULT_ANSWER_MODEL, LOG_DIR
+from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, add_verbose_argument
 from dotenv import load_dotenv
-from logzero import logger
 from openai import OpenAI
 
 from graphrag.datasets import OdysseyCorpus
@@ -38,6 +37,7 @@ from graphrag.extraction import (
 from graphrag.graph import CypherGraphStore, KuzuCypherGraphStore
 from graphrag.ingestion import TextChunker
 from graphrag.llm import OpenAILLMClient, TokenCounter
+from graphrag.observability import RunLogging, Trace
 from graphrag.pipeline import Pipeline
 from graphrag.retrieval import EntityEmbeddingIndexer, GlobalSearch, LocalSearch, OpenAIEmbedder
 from graphrag.settings import Settings
@@ -56,6 +56,8 @@ CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 40
 GLOBAL_QUESTION = "What is this story about?"
 LOCAL_QUESTION = "Who is Ulysses?"
+
+trace = Trace(__name__)
 
 
 @dataclass
@@ -79,12 +81,16 @@ class LoadBooksStep:
     def __call__(self, context: Ch07Context) -> None:
         books = self._corpus.load_books()
         context.books = books[: self._number_of_books]
-        logger.info(f"Loaded {len(books)} books; processing {len(context.books)}")
         # As in the book: how big the books are, before chunking.
         tokens = [self._token_counter.count(book) for book in books]
-        logger.info(
-            f"Tokens per book: avg {sum(tokens) / len(tokens):.0f}, "
-            f"min {min(tokens)}, max {max(tokens)}"
+        trace.fields(
+            {
+                "books": f"{len(books)} loaded, processing {len(context.books)}",
+                "tokens": (
+                    f"per book: mean {sum(tokens) / len(tokens):.0f}, "
+                    f"min {min(tokens)}, max {max(tokens)}"
+                ),
+            }
         )
 
 
@@ -94,10 +100,12 @@ class ChunkBooksStep:
 
     def __call__(self, context: Ch07Context) -> None:
         context.chunked_books = [self._chunker.split(book) for book in context.books]
-        logger.info(f"Chunks per book: {[len(chunks) for chunks in context.chunked_books]}")
+        trace.field("chunks", f"per book: {[len(chunks) for chunks in context.chunked_books]}")
 
 
 class ExtractGraphStep:
+    title = "Extract entities and relationships (LLM, per chunk)"
+
     def __init__(
         self,
         extractor: EntityRelationshipExtractor,
@@ -109,31 +117,39 @@ class ExtractGraphStep:
         self._store = store
 
     def __call__(self, context: Ch07Context) -> None:
+        progress = trace.progress("chunk", sum(len(chunks) for chunks in context.chunked_books))
         for book_id, chunks in enumerate(context.chunked_books):
             for chunk_index, chunk in enumerate(chunks):
                 extraction = self._extractor.extract(chunk)
                 self._importer.import_chunk(book_id, chunk_index, chunk, extraction)
-                logger.info(
-                    f"Book {book_id} chunk {chunk_index + 1}/{len(chunks)}: "
-                    f"{len(extraction.entities)} entities, "
+                progress.advance(
+                    f"book {book_id}: {len(extraction.entities)} entities, "
                     f"{len(extraction.relationships)} relationships"
                 )
         [entities] = self._store.query("MATCH (e:Entity) RETURN count(*) AS n")
         [relationships] = self._store.query("MATCH ()-[r:RELATIONSHIP]->() RETURN count(*) AS n")
-        logger.info(f"Graph: {entities['n']} entities, {relationships['n']} relationships")
+        trace.field("graph", f"{entities['n']} entities, {relationships['n']} relationships")
 
 
 class SummarizeDescriptionsStep:
+    title = "Summarize descriptions (LLM)"
+
     def __init__(self, summarizer: DescriptionSummarizer) -> None:
         self._summarizer = summarizer
 
     def __call__(self, context: Ch07Context) -> None:
-        entities = self._summarizer.summarize_entities()
-        pairs = self._summarizer.summarize_relationships()
-        logger.info(f"LLM-summarized {entities} entities and {pairs} relationship pairs")
+        trace.fields(
+            {
+                "entities": f"{self._summarizer.summarize_entities()} summarized",
+                "pairs": f"{self._summarizer.summarize_relationships()} relationship pairs "
+                "summarized",
+            }
+        )
 
 
 class DetectCommunitiesStep:
+    title = "Detect communities (Louvain)"
+
     def __init__(self, detector: KuzuLouvainCommunityDetector) -> None:
         self._detector = detector
 
@@ -141,91 +157,137 @@ class DetectCommunitiesStep:
         sizes = sorted(self._detector.detect().values())
         if not sizes:
             raise ValueError("Louvain found no communities; the graph has no relationships")
-        logger.info(
-            f"{len(sizes)} communities: min {sizes[0]}, max {sizes[-1]}, "
-            f"mean {sum(sizes) / len(sizes):.1f}"
+        trace.field(
+            "communities",
+            f"{len(sizes)}, sized min {sizes[0]}, max {sizes[-1]}, "
+            f"mean {sum(sizes) / len(sizes):.1f}",
         )
 
 
 class ReportCommunitiesStep:
+    title = "Write community reports (LLM)"
+
     def __init__(self, reporter: CommunityReporter) -> None:
         self._reporter = reporter
 
     def __call__(self, context: Ch07Context) -> None:
-        for report in self._reporter.report_communities():
-            logger.info(f"Community {report.community_id} ({report.rating:g}): {report.title}")
+        reports = self._reporter.report_communities()
+        trace.table(
+            "reports",
+            [{"community": r.community_id, "rating": r.rating, "title": r.title} for r in reports],
+            max_width=60,
+        )
 
 
 class IndexEntitiesStep:
+    title = "Embed entity summaries"
+
     def __init__(self, indexer: EntityEmbeddingIndexer) -> None:
         self._indexer = indexer
 
     def __call__(self, context: Ch07Context) -> None:
-        logger.info(f"Embedded {self._indexer.index()} entity summaries")
+        trace.field("embedded", f"{self._indexer.index()} entity summaries")
 
 
 class GlobalSearchStep:
+    title = "Global search (map-reduce over reports)"
+
     def __init__(self, search: GlobalSearch) -> None:
         self._search = search
 
     def __call__(self, context: Ch07Context) -> None:
-        logger.info(f"--- Global search: {context.global_question} ---")
+        trace.field("question", context.global_question)
         points = self._search.map(context.global_question)
-        logger.info(f"{len(points)} key points from the community reports")
+        trace.field("map", f"{len(points)} key points from the community reports")
+        trace.table(
+            "points",
+            [{"score": p.score, "point": p.description} for p in points],
+            max_width=90,
+            level=logging.DEBUG,
+        )
         context.global_answer = self._search.reduce(context.global_question, points)
-        logger.info(f"Answer:\n{context.global_answer}")
+        trace.field("answer", context.global_answer)
 
 
 class LocalSearchStep:
+    title = "Local search (entities + their neighbourhood)"
+
     def __init__(self, search: LocalSearch) -> None:
         self._search = search
 
     def __call__(self, context: Ch07Context) -> None:
-        logger.info(f"--- Local search: {context.local_question} ---")
+        trace.field("question", context.local_question)
         local_context = self._search.build_context(context.local_question)
-        logger.info(f"Context: {local_context.to_prompt()}")
-        context.local_answer = self._search.answer(context.local_question, local_context)
-        logger.info(f"Answer:\n{context.local_answer}")
-
-
-def main(process_name: str, number_of_books: int) -> None:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    logzero.logfile(LOG_DIR / f"{process_name}.log", encoding="utf-8")
-
-    load_dotenv()
-    settings = Settings.from_env()
-    openai_client = OpenAI(api_key=settings.openai_api_key)
-    llm = OpenAILLMClient(openai_client)
-    embedder = OpenAIEmbedder(openai_client)
-
-    # Kept apart from the other chapters' databases, and reset on every run:
-    # re-importing would append duplicate descriptions, and Kuzu won't
-    # rewrite the embedding column once the vector index covers it.
-    db_path = settings.kuzu_db_path.with_name(f"{settings.kuzu_db_path.name}_ch07")
-    with KuzuCypherGraphStore(db_path) as store:
-        importer = EntityGraphImporter(store, embedder.dimensions)
-        importer.create_schema(reset=True)
-
-        pipeline: Pipeline[Ch07Context] = Pipeline(
-            [
-                LoadBooksStep(OdysseyCorpus(ODYSSEY_PATH), number_of_books, TokenCounter()),
-                ChunkBooksStep(TextChunker(CHUNK_SIZE, CHUNK_OVERLAP)),
-                ExtractGraphStep(
-                    EntityRelationshipExtractor(llm, ENTITY_TYPES, model=DEFAULT_ANSWER_MODEL),
-                    importer,
-                    store,
-                ),
-                SummarizeDescriptionsStep(
-                    DescriptionSummarizer(store, llm, model=DEFAULT_ANSWER_MODEL)
-                ),
-                DetectCommunitiesStep(KuzuLouvainCommunityDetector(store)),
-                ReportCommunitiesStep(CommunityReporter(store, llm, model=DEFAULT_ANSWER_MODEL)),
-                IndexEntitiesStep(EntityEmbeddingIndexer(store, embedder)),
-                GlobalSearchStep(GlobalSearch(store, llm, model=DEFAULT_ANSWER_MODEL)),
-                LocalSearchStep(LocalSearch(store, llm, embedder, model=DEFAULT_ANSWER_MODEL)),
-            ]
+        trace.field(
+            "context",
+            f"{len(local_context.entities)} entities, {len(local_context.chunks)} chunks, "
+            f"{len(local_context.reports)} reports, "
+            f"{len(local_context.relationships)} relationships",
         )
-        pipeline.run(Ch07Context(global_question=GLOBAL_QUESTION, local_question=LOCAL_QUESTION))
+        parts = {
+            "Entities": local_context.entities,
+            "Chunks": local_context.chunks,
+            "Reports": local_context.reports,
+            "Relationships": local_context.relationships,
+        }
+        trace.block(
+            "",
+            "\n\n".join(
+                f"{name}:\n" + "\n".join("• " + item.replace("\n", "\n  ") for item in items)
+                for name, items in parts.items()
+            ),
+            level=logging.DEBUG,
+        )
+        context.local_answer = self._search.answer(context.local_question, local_context)
+        trace.field("answer", context.local_answer)
+
+
+def main(process_name: str, number_of_books: int, verbose: bool) -> None:
+    with RunLogging(
+        process_name,
+        LOG_DIR,
+        title="ch07 · GraphRAG over the Odyssey (global and local search)",
+        details={"model": DEFAULT_ANSWER_MODEL, "books": number_of_books},
+        verbose=verbose,
+    ) as run:
+        load_dotenv()
+        settings = Settings.from_env()
+        openai_client = OpenAI(api_key=settings.openai_api_key)
+        llm = OpenAILLMClient(openai_client, usage=run.usage)
+        embedder = OpenAIEmbedder(openai_client, usage=run.usage)
+
+        # Kept apart from the other chapters' databases, and reset on every run:
+        # re-importing would append duplicate descriptions, and Kuzu won't
+        # rewrite the embedding column once the vector index covers it.
+        db_path = settings.kuzu_db_path.with_name(f"{settings.kuzu_db_path.name}_ch07")
+        with KuzuCypherGraphStore(db_path) as store:
+            importer = EntityGraphImporter(store, embedder.dimensions)
+            importer.create_schema(reset=True)
+
+            pipeline: Pipeline[Ch07Context] = Pipeline(
+                [
+                    LoadBooksStep(OdysseyCorpus(ODYSSEY_PATH), number_of_books, TokenCounter()),
+                    ChunkBooksStep(TextChunker(CHUNK_SIZE, CHUNK_OVERLAP)),
+                    ExtractGraphStep(
+                        EntityRelationshipExtractor(llm, ENTITY_TYPES, model=DEFAULT_ANSWER_MODEL),
+                        importer,
+                        store,
+                    ),
+                    SummarizeDescriptionsStep(
+                        DescriptionSummarizer(store, llm, model=DEFAULT_ANSWER_MODEL)
+                    ),
+                    DetectCommunitiesStep(KuzuLouvainCommunityDetector(store)),
+                    ReportCommunitiesStep(
+                        CommunityReporter(store, llm, model=DEFAULT_ANSWER_MODEL)
+                    ),
+                    IndexEntitiesStep(EntityEmbeddingIndexer(store, embedder)),
+                    GlobalSearchStep(GlobalSearch(store, llm, model=DEFAULT_ANSWER_MODEL)),
+                    LocalSearchStep(LocalSearch(store, llm, embedder, model=DEFAULT_ANSWER_MODEL)),
+                ]
+            )
+            pipeline.run(
+                Ch07Context(global_question=GLOBAL_QUESTION, local_question=LOCAL_QUESTION)
+            )
 
 
 if __name__ == "__main__":
@@ -241,5 +303,6 @@ if __name__ == "__main__":
         default=1,
         help="How many of the Odyssey's 24 books to build the graph from (the book uses 1).",
     )
+    add_verbose_argument(parser)
     args = parser.parse_args()
-    main(args.process_name, args.books)
+    main(args.process_name, args.books, args.verbose)

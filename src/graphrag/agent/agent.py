@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from dataclasses import dataclass
-
-from logzero import logger
 
 from graphrag.agent.critic import AnswerCritic
 from graphrag.agent.query_planner import QueryPlanner
 from graphrag.agent.router import ToolRouter
 from graphrag.llm.client import LLMClient, Message, OpenAILLMClient
+from graphrag.observability import Trace
 from graphrag.prompts import PromptRepository
 
 # The final-answer system prompt quotes agent_tool_answer.txt's wording to
@@ -16,6 +16,8 @@ from graphrag.prompts import PromptRepository
 _SYSTEM_PROMPT = "agent_main_system.txt"
 _USER_PROMPT = "agent_main_user.txt"
 _TOOL_ANSWER_PROMPT = "agent_tool_answer.txt"
+
+_trace = Trace(__name__)
 
 
 @dataclass(frozen=True)
@@ -69,12 +71,14 @@ class Agent:
         retrieved context.
         """
         history: list[Message] = []
-        self._gather(question, history)
+        with _trace.section("Gather"):
+            self._gather(question, history)
 
         follow_ups = self._critic.critique(question, history)
-        logger.info(f"Critique: {follow_ups}")
+        _trace.bullets("critique", follow_ups, empty="nothing missing")
         if follow_ups:
-            self._gather(" ".join(follow_ups), history)
+            with _trace.section("Gather follow-ups"):
+                self._gather(" ".join(follow_ups), history)
 
         answer = self._llm.complete(
             [
@@ -84,19 +88,30 @@ class Agent:
             ],
             model=self._model,
         )
+        _trace.field("answer", answer)
         return AgentResponse(answer, [message["content"] for message in history])
 
     def _gather(self, question: str, history: list[Message]) -> None:
         planned = self._query_planner.plan(question, history)
-        logger.info(f"Planned questions: {planned}")
+        if len(planned) == 1:
+            _trace.field("plan", planned[0])
+        else:
+            _trace.bullets("plan", planned)
         # Each question is routed with the answers so far, including those
         # to the questions planned before it.
-        for planned_question in planned:
-            results = self._router.route(planned_question, history)
+        for index, planned_question in enumerate(planned, start=1):
+            # Split questions get a section each, so every tool call is
+            # shown under the question it answers.
+            routing = (
+                _trace.section(f"Q{index}: {planned_question}")
+                if len(planned) > 1
+                else nullcontext()
+            )
+            with routing:
+                results = self._router.route(planned_question, history)
             # default=str: text2cypher can return values JSON has no type
             # for (e.g. dates).
             answer = json.dumps(results, default=str)
-            logger.info(f"Tool results for {planned_question!r}: {answer}")
             history.append(
                 {
                     "role": "assistant",

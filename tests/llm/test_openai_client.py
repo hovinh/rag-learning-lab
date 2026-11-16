@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from graphrag.llm.client import OpenAILLMClient, ToolCall
 from graphrag.llm.errors import LLMResponseError
+from graphrag.observability import Usage, UsageMeter
 
 
 class FakeCompletions:
@@ -83,6 +84,45 @@ def test_parse_returns_parsed_model_and_sends_it_as_response_format():
 
     assert client.parse([], Answer, model="m") == Answer(text="hi")
     assert completions.kwargs["response_format"] is Answer
+
+
+def test_usage_meter_records_each_call_and_its_tokens():
+    meter = UsageMeter()
+    completions = FakeCompletions(SimpleNamespace(content="text"))
+    usage = SimpleNamespace(prompt_tokens=120, completion_tokens=8)
+    completions.create = lambda **kwargs: SimpleNamespace(  # type: ignore[method-assign]
+        choices=[SimpleNamespace(message=completions.message)], usage=usage
+    )
+    sdk = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenAILLMClient(sdk, usage=meter)
+
+    client.complete([], model="m")
+    client.complete([], model="m")
+
+    assert meter.snapshot() == Usage(llm_calls=2, prompt_tokens=240, completion_tokens=16)
+
+
+def test_stream_skips_the_final_usage_chunk_and_records_it():
+    meter = UsageMeter()
+
+    def chunk(content, usage=None):
+        choices = (
+            [] if content is None else [SimpleNamespace(delta=SimpleNamespace(content=content))]
+        )
+        return SimpleNamespace(choices=choices, usage=usage)
+
+    stream = [
+        chunk("Hel"),
+        chunk("lo"),
+        chunk(None, SimpleNamespace(prompt_tokens=5, completion_tokens=2)),
+    ]
+    completions = SimpleNamespace(create=lambda **kwargs: iter(stream))
+    client = OpenAILLMClient(
+        SimpleNamespace(chat=SimpleNamespace(completions=completions)), usage=meter
+    )
+
+    assert "".join(client.stream([], model="m")) == "Hello"
+    assert meter.snapshot() == Usage(llm_calls=1, prompt_tokens=5, completion_tokens=2)
 
 
 def test_parse_raises_with_refusal_reason():

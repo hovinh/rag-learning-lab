@@ -6,6 +6,58 @@ notebooks and [CLAUDE.md](../CLAUDE.md) for why this repo re-implements
 them). Each section below documents what its script does and any
 non-obvious mechanics worth understanding before you read the code.
 
+## Reading the logs
+
+Every script logs the same way, through
+[`graphrag.observability`](../src/graphrag/observability):
+`--process-name` names the log file, `logs/<process_name>.log`
+(overwritten on each run), and `--verbose` adds the full payloads to the
+console too. A run reads as an indented tree:
+
+```
+══════════════════════════════════════════════════════════════════════════════
+ ch05 · Agentic RAG over the movies graph
+ run       ch05_agentic_rag_movies · 2026-11-16 11:44:51 UTC+0800
+ model     gpt-4o
+ ...
+══════════════════════════════════════════════════════════════════════════════
+11:44:51 • Seed the movies graph · 0.4s
+11:44:51 ┌ Question 1/2
+11:44:51 │ question  Who's the main actor in the movie Matrix and what other movies ...?
+11:44:51 │ ┌ Gather
+11:44:53 │ │ plan      Who is the actor in the movie Matrix and what other movies ...?
+11:44:54 │ │ tool      movie_info_by_title(title="Matrix")
+11:44:54 │ │ result    2 rows: The Matrix, 1999, Welcome to the Real World, [4 items], ...
+11:44:54 │ └ 2.6s · 2 LLM calls · 2.9k tokens
+11:44:55 │ critique  • Who is considered the main actor in 'The Matrix'?
+11:44:57 │ answer    The main actor in the movie "The Matrix" is Keanu Reeves. ...
+11:44:57 └ 6.1s · 7 LLM calls · 9.8k tokens
+══════════════════════════════════════════════════════════════════════════════
+ ✓ finished in 12.4s
+ LLM       14 calls · 19.6k tokens (18.9k in, 0.7k out)
+ log file  logs/ch05_agentic_rag_movies.log
+══════════════════════════════════════════════════════════════════════════════
+```
+
+- `┌ … └` is a section: a pipeline step (`[2/5] Chunk books`), a
+  question, an agent round. Its closing line gives how long it took and
+  the LLM/embedding calls made inside it. A section that logged nothing
+  is a single `•` line.
+- `label  value` lines are what that step produced; multi-line values
+  (answers, Cypher, tables) stay aligned under the value column.
+- The console shows INFO, a summary of each result (`2 rows: …`). The
+  log file also has DEBUG: the full payload under each summary (whole
+  query results, retrieved texts, local-search context). Use `--verbose`
+  to see those on the console as well.
+- `⚠` marks warnings (a rejected Cypher query, a judge that couldn't
+  score) and `✗` errors. A run that crashes logs its traceback to the file
+  and its footer says `✗ failed`.
+
+To get the same output from your own script, wrap it in
+`RunLogging(process_name, log_dir)`, pass `usage=run.usage` to
+`OpenAILLMClient`/`OpenAIEmbedder` so the footer can count calls and
+tokens, and log through a module-level `Trace(__name__)`.
+
 ## Chapter 2 — PDF ingestion, vector search, and hybrid search
 
 Script: [vector_similarity_and_hybrid_search.py](vector_similarity_and_hybrid_search.py)
@@ -23,8 +75,7 @@ Pipeline: download a PDF → extract text (`PdfLoader`) → chunk it
 embeddings in Kuzu (`KuzuGraphStore`) → answer a question two ways: plain
 vector search, then hybrid (vector + keyword) search. `--process-name`
 names the log file written to `logs/<process_name>.log` (see
-[`graphrag.settings`](../src/graphrag/settings.py) and the script's use of
-`logzero`).
+[Reading the logs](#reading-the-logs)).
 
 ### How Kuzu's vector search works (HNSW)
 

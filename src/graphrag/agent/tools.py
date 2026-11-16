@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from typing import Any, ClassVar
-
-from logzero import logger
 
 from graphrag.graph.cypher_store import CypherGraphStore
 from graphrag.graph.errors import GraphQueryError
 from graphrag.graph.text2cypher import Text2Cypher
 from graphrag.llm.client import ToolDefinition
+from graphrag.observability import Trace
 
 ToolResult = str | list[dict[str, Any]]
+
+_trace = Trace(__name__)
 
 
 def string_parameters(name: str, description: str) -> dict[str, Any]:
@@ -99,6 +101,7 @@ class Text2CypherTool(Tool):
     def run(self, arguments: Mapping[str, Any]) -> ToolResult:
         question = str(arguments["question"])
         cypher = self._text2cypher.generate(question)
+        _trace.field("cypher", cypher)
         corrections = 0
         while True:
             try:
@@ -108,7 +111,9 @@ class Text2CypherTool(Tool):
                     # Returned rather than raised, as in the book: the error
                     # becomes part of the conversation, so the critique step
                     # can ask again.
+                    _trace.field("rejected", str(exc), level=logging.WARNING)
                     return f"{cypher} caused an error: {exc}"
-                logger.info(f"Correcting rejected Cypher: {cypher} ({exc})")
+                _trace.field("rejected", str(exc), level=logging.WARNING)
                 cypher = self._text2cypher.correct(question, cypher, str(exc))
+                _trace.field("corrected", cypher)
                 corrections += 1

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-
-from logzero import logger
 
 from graphrag.evaluation.metrics import Metric
 from graphrag.evaluation.models import EvaluationSample
 from graphrag.llm.errors import LLMResponseError
+from graphrag.observability import Trace
+
+_trace = Trace(__name__)
 
 
 @dataclass(frozen=True)
@@ -60,11 +62,13 @@ class Evaluator:
     def evaluate(self, samples: Sequence[EvaluationSample]) -> EvaluationReport:
         rows = []
         for index, sample in enumerate(samples, start=1):
-            logger.info(f"Scoring [{index}/{len(samples)}] {sample.question}")
-            if sample.error is not None:
-                scores: dict[str, float | None] = {m.name: None for m in self._metrics}
-            else:
-                scores = {m.name: self._score(m, sample) for m in self._metrics}
+            with _trace.section(f"Score [{index}/{len(samples)}] {sample.question}"):
+                if sample.error is not None:
+                    _trace.field("skipped", "no answer to score", level=logging.WARNING)
+                    scores: dict[str, float | None] = {m.name: None for m in self._metrics}
+                else:
+                    scores = {m.name: self._score(m, sample) for m in self._metrics}
+                    _trace.fields({name: format_score(score) for name, score in scores.items()})
             rows.append(ScoredSample(sample, scores))
         return EvaluationReport([m.name for m in self._metrics], rows)
 
@@ -75,5 +79,9 @@ class Evaluator:
         try:
             return metric.score(sample)
         except LLMResponseError:
-            logger.exception(f"{metric.name} couldn't score {sample.question!r}")
+            _trace.exception(f"{metric.name} couldn't score this answer")
             return None
+
+
+def format_score(score: float | None) -> str:
+    return "n/a" if score is None else f"{score:.3f}"

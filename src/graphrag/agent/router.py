@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-
-from logzero import logger
+import json
+import logging
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from graphrag.agent.errors import ToolRoutingError
 from graphrag.agent.tools import Tool, ToolResult
 from graphrag.llm.client import LLMClient, Message, OpenAILLMClient, ToolCall
+from graphrag.observability import Trace
 from graphrag.prompts import PromptRepository
 
 _SYSTEM_PROMPT = "agent_tool_picker_system.txt"
 _USER_PROMPT = "agent_tool_picker_user.txt"
+
+_trace = Trace(__name__)
 
 
 class ToolRouter:
@@ -48,6 +52,8 @@ class ToolRouter:
             [tool.definition() for tool in self._tools.values()],
             model=self._model,
         )
+        if not calls:
+            _trace.field("tool", "none chosen", level=logging.WARNING)
         return [self._run(call) for call in calls]
 
     def _run(self, call: ToolCall) -> ToolResult:
@@ -59,5 +65,15 @@ class ToolRouter:
             raise ToolRoutingError(
                 f"LLM called {call.name!r} without required arguments {sorted(missing)}"
             )
-        logger.info(f"Tool: {call.name}({call.arguments})")
-        return tool.run(call.arguments)
+        _trace.field("tool", f"{call.name}({format_arguments(call.arguments)})")
+        result = tool.run(call.arguments)
+        _trace.summary("result", result)
+        return result
+
+
+def format_arguments(arguments: Mapping[str, Any]) -> str:
+    """``{'title': 'Matrix'}`` -> ``title="Matrix"``."""
+    return ", ".join(
+        f"{name}={json.dumps(value, ensure_ascii=False, default=str)}"
+        for name, value in arguments.items()
+    )

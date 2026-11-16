@@ -22,6 +22,3 @@ extend-exclude = ["template"]
 python_version = "3.11"
 packages = ["graphrag"]
 
-[[tool.mypy.overrides]]
-module = "logzero"
-ignore_missing_imports = true

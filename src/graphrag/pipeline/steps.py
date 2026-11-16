@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
-from logzero import logger
-
 from graphrag.ingestion.pdf_loader import PdfLoader
 from graphrag.llm.client import LLMClient, OpenAILLMClient
+from graphrag.observability import Trace, preview
 from graphrag.prompts import PromptRepository
 
 _ANSWER_SYSTEM_PROMPT = "answer_system.txt"
 _ANSWER_USER_PROMPT = "answer_user.txt"
+
+_trace = Trace(__name__)
 
 
 class HasText(Protocol):
@@ -28,6 +30,8 @@ class LoadPdfTextStep:
     start from the same "download a PDF, read its text" step.
     """
 
+    title = "Load PDF text"
+
     def __init__(self, pdf_loader: PdfLoader, url: str, path: Path) -> None:
         self._pdf_loader = pdf_loader
         self._url = url
@@ -38,6 +42,7 @@ class LoadPdfTextStep:
         if not self._path.exists():
             self._pdf_loader.download(self._url, self._path)
         context.text = self._pdf_loader.extract_text(self._path)
+        _trace.field("text", f"{len(context.text):,} characters from {self._path}")
 
 
 class ScoredMatch(Protocol):
@@ -68,6 +73,9 @@ class AnswerStep:
     ``answer_system.txt``/``answer_user.txt``, and streams the LLM's answer
     into ``context.answer`` -- replaces each example's own duplicated
     ``log_matches``/``build_prompt``/``ask`` functions.
+
+    ``label`` names the retrieval the matches came from, in the step's
+    pipeline section title (``Answer (vector search)``).
     """
 
     def __init__(
@@ -80,31 +88,36 @@ class AnswerStep:
     ) -> None:
         self._llm = llm
         self._model = model
-        self._label = label
+        self.title = f"Answer ({label.lower()})" if label else "Answer"
         prompts = prompts or PromptRepository()
         self._system_message = prompts.load(_ANSWER_SYSTEM_PROMPT)
         self._user_template = prompts.load(_ANSWER_USER_PROMPT)
 
     def __call__(self, context: AnswerContext) -> None:
-        if self._label:
-            logger.info(f"--- {self._label} ---")
-        for match in context.matches:
-            logger.info(f"{match.score} {match.text}")
+        _trace.table(
+            "matches",
+            [
+                {"#": rank, "score": match.score, "text": preview(match.text, 70)}
+                for rank, match in enumerate(context.matches, start=1)
+            ],
+            max_width=70,
+        )
+        for rank, match in enumerate(context.matches, start=1):
+            _trace.block(f"match {rank}", match.text, level=logging.DEBUG)
 
         context_text = "\n".join(match.text for match in context.matches)
         user_message = self._user_template.format(context=context_text, question=context.question)
 
-        logger.info(f"Question: {context.question}")
-        deltas = []
-        for delta in self._llm.stream(
-            [
-                {"role": "system", "content": self._system_message},
-                {"role": "user", "content": user_message},
-            ],
-            model=self._model,
-        ):
-            print(delta, end="", flush=True)
-            deltas.append(delta)
-        print()
-        context.answer = "".join(deltas)
-        logger.info(f"Answer: {context.answer}")
+        _trace.field("question", context.question)
+        # Streamed as the book does, but logged once complete: printing
+        # deltas would break up the trace on the console.
+        context.answer = "".join(
+            self._llm.stream(
+                [
+                    {"role": "system", "content": self._system_message},
+                    {"role": "user", "content": user_message},
+                ],
+                model=self._model,
+            )
+        )
+        _trace.field("answer", context.answer)

@@ -20,14 +20,11 @@ from __future__ import annotations
 
 import argparse
 import csv
-import io
-import sys
+import logging
 from pathlib import Path
 
-import logzero
-from constants import DEFAULT_ANSWER_MODEL, LOG_DIR
+from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, add_verbose_argument
 from dotenv import load_dotenv
-from logzero import logger
 from movie_agent import build_movie_agent
 from openai import OpenAI
 
@@ -39,82 +36,105 @@ from graphrag.evaluation import (
     EvaluationReport,
     Evaluator,
     Faithfulness,
+    format_score,
     load_benchmark,
     load_samples,
     save_samples,
 )
 from graphrag.graph import KuzuCypherGraphStore
 from graphrag.llm import OpenAILLMClient
+from graphrag.observability import RunLogging, Trace, format_duration, preview
 from graphrag.retrieval import OpenAIEmbedder
 from graphrag.settings import Settings
 
-
-def main(process_name: str, limit: int | None, rescore: Path | None, decompose: bool) -> None:
-    # Windows defaults stdout/the log file to the cp1252 codepage, which
-    # can't encode some names in the movies dataset (e.g. "Miloš Forman");
-    # force UTF-8 so those log lines don't get silently dropped.
-    for stream in (sys.stdout, sys.stderr):
-        if isinstance(stream, io.TextIOWrapper):
-            stream.reconfigure(encoding="utf-8")
-
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    logzero.logfile(LOG_DIR / f"{process_name}.log", encoding="utf-8")
-
-    load_dotenv()
-    settings = Settings.from_env()
-    openai_client = OpenAI(api_key=settings.openai_api_key)
-    llm = OpenAILLMClient(openai_client)
-
-    if rescore is not None:
-        # Judges only: score answers an earlier run saved, so a change to a
-        # metric is measured on the same answers.
-        samples = load_samples(rescore)[:limit]
-        logger.info(f"Re-scoring {len(samples)} samples from {rescore}")
-    else:
-        cases = load_benchmark(MOVIES_BENCHMARK_PATH)[:limit]
-        # Kept apart from the other chapters' databases: seeding drops and
-        # recreates its tables on every run.
-        db_path = settings.kuzu_db_path.with_name(f"{settings.kuzu_db_path.name}_ch08")
-        with KuzuCypherGraphStore(db_path) as store:
-            MovieGraphSeeder(store).seed()
-            agent = build_movie_agent(llm, store, decompose=decompose)
-            samples = BenchmarkRunner(store, agent.respond).run(cases)
-        samples_path = LOG_DIR / f"{process_name}_samples.json"
-        save_samples(samples, samples_path)
-        logger.info(f"Answered samples written to {samples_path}")
-
-    evaluator = Evaluator(
-        [
-            AnswerCorrectness(llm, OpenAIEmbedder(openai_client), model=DEFAULT_ANSWER_MODEL),
-            ContextRecall(llm, model=DEFAULT_ANSWER_MODEL),
-            Faithfulness(llm, model=DEFAULT_ANSWER_MODEL),
-        ]
-    )
-    report = evaluator.evaluate(samples)
-
-    log_report(report)
-    results_path = LOG_DIR / f"{process_name}_results.csv"
-    write_results(report, results_path)
-    logger.info(f"Per-question results written to {results_path}")
+trace = Trace(__name__)
 
 
-def format_score(score: float | None) -> str:
-    return "n/a" if score is None else f"{score:.3f}"
+def main(
+    process_name: str, limit: int | None, rescore: Path | None, decompose: bool, verbose: bool
+) -> None:
+    mode = f"re-score {rescore}" if rescore else ("decompose" if decompose else "update")
+    with RunLogging(
+        process_name,
+        LOG_DIR,
+        title="ch08 · Evaluating the ch05 agent on the movies benchmark",
+        details={
+            "model": DEFAULT_ANSWER_MODEL,
+            "planner": mode,
+            "questions": limit or "all",
+        },
+        verbose=verbose,
+    ) as run:
+        load_dotenv()
+        settings = Settings.from_env()
+        openai_client = OpenAI(api_key=settings.openai_api_key)
+        llm = OpenAILLMClient(openai_client, usage=run.usage)
+
+        if rescore is not None:
+            # Judges only: score answers an earlier run saved, so a change to a
+            # metric is measured on the same answers.
+            samples = load_samples(rescore)[:limit]
+            trace.field("samples", f"{len(samples)} loaded from {rescore}")
+        else:
+            cases = load_benchmark(MOVIES_BENCHMARK_PATH)[:limit]
+            # Kept apart from the other chapters' databases: seeding drops and
+            # recreates its tables on every run.
+            db_path = settings.kuzu_db_path.with_name(f"{settings.kuzu_db_path.name}_ch08")
+            with KuzuCypherGraphStore(db_path) as store:
+                with trace.section("Seed the movies graph"):
+                    MovieGraphSeeder(store).seed()
+                agent = build_movie_agent(llm, store, decompose=decompose)
+                with trace.section(f"Answer {len(cases)} benchmark questions"):
+                    samples = BenchmarkRunner(store, agent.respond).run(cases)
+            samples_path = LOG_DIR / f"{process_name}_samples.json"
+            save_samples(samples, samples_path)
+            trace.field("samples", f"written to {samples_path}")
+
+        evaluator = Evaluator(
+            [
+                AnswerCorrectness(
+                    llm,
+                    OpenAIEmbedder(openai_client, usage=run.usage),
+                    model=DEFAULT_ANSWER_MODEL,
+                ),
+                ContextRecall(llm, model=DEFAULT_ANSWER_MODEL),
+                Faithfulness(llm, model=DEFAULT_ANSWER_MODEL),
+            ]
+        )
+        with trace.section(f"Score {len(samples)} answers (LLM judges)"):
+            report = evaluator.evaluate(samples)
+
+        with trace.section("Report"):
+            log_report(report)
+            results_path = LOG_DIR / f"{process_name}_results.csv"
+            write_results(report, results_path)
+            trace.field("results", f"per question in {results_path}")
 
 
 def log_report(report: EvaluationReport) -> None:
-    for row in report.rows:
-        scores = ", ".join(f"{name}={format_score(s)}" for name, s in row.scores.items())
-        logger.info(f"--- {row.sample.question} ---")
-        logger.info(f"Ground truth: {row.sample.ground_truth}")
-        logger.info(f"Answer: {row.sample.error or row.sample.answer}")
-        logger.info(f"Latency: {row.sample.latency:.1f}s; {scores}")
-
-    logger.info("=== Summary ===")
-    for name, mean in report.means().items():
-        logger.info(f"{name}: {format_score(mean)}")
-    logger.info(f"mean latency: {format_score(report.mean_latency())}s")
-    logger.info(f"failed questions: {len(report.failed())}/{len(report.rows)}")
+    trace.table(
+        "scores",
+        [
+            {
+                "#": index,
+                "question": preview(row.sample.question, 45),
+                "latency": format_duration(row.sample.latency),
+                **{name: format_score(score) for name, score in row.scores.items()},
+            }
+            for index, row in enumerate(report.rows, start=1)
+        ],
+        max_width=45,
+    )
+    mean_latency = report.mean_latency()
+    trace.fields(
+        {
+            **{f"mean {name}": format_score(mean) for name, mean in report.means().items()},
+            "mean latency": "n/a" if mean_latency is None else format_duration(mean_latency),
+            "failed": f"{len(report.failed())}/{len(report.rows)} questions",
+        }
+    )
+    for sample in report.failed():
+        trace.field("failed", f"{sample.question}: {sample.error}", level=logging.WARNING)
 
 
 def write_results(report: EvaluationReport, path: Path) -> None:
@@ -168,7 +188,8 @@ if __name__ == "__main__":
             "its own (the book's ch08 agent), instead of ch05's one rewritten question."
         ),
     )
+    add_verbose_argument(parser)
     args = parser.parse_args()
     if args.rescore is not None and args.decompose:
         parser.error("--decompose has no effect with --rescore, which doesn't run the agent")
-    main(args.process_name, args.limit, args.rescore, args.decompose)
+    main(args.process_name, args.limit, args.rescore, args.decompose, args.verbose)

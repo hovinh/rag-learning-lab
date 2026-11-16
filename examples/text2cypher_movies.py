@@ -14,29 +14,29 @@ from the repo root:
 from __future__ import annotations
 
 import argparse
-import io
-import sys
 from dataclasses import dataclass, field
 from typing import Any
 
-import logzero
 from constants import (
     DEFAULT_ANSWER_MODEL,
     LOG_DIR,
     MOVIES_CYPHER_EXAMPLES,
     MOVIES_TERMINOLOGY,
+    add_verbose_argument,
 )
 from dotenv import load_dotenv
-from logzero import logger
 from openai import OpenAI
 
 from graphrag.datasets import MovieGraphSeeder
 from graphrag.graph import CypherGraphStore, KuzuCypherGraphStore, Text2Cypher
 from graphrag.llm import OpenAILLMClient
+from graphrag.observability import RunLogging, Trace
 from graphrag.pipeline import Pipeline
 from graphrag.settings import Settings
 
 QUESTION = "Who directed the most movies?"
+
+trace = Trace(__name__)
 
 
 @dataclass
@@ -47,13 +47,15 @@ class Ch04Context:
 
 
 class GenerateCypherStep:
+    title = "Generate Cypher (text2cypher)"
+
     def __init__(self, text2cypher: Text2Cypher) -> None:
         self._text2cypher = text2cypher
 
     def __call__(self, context: Ch04Context) -> None:
-        logger.info(f"Question: {context.question}")
+        trace.field("question", context.question)
         context.cypher = self._text2cypher.generate(context.question)
-        logger.info(f"Generated Cypher:\n{context.cypher}")
+        trace.field("cypher", context.cypher)
 
 
 class ExecuteCypherStep:
@@ -61,50 +63,49 @@ class ExecuteCypherStep:
     it, but executing it is what shows the query is valid against the graph.
     """
 
+    title = "Run the Cypher against Kuzu"
+
     def __init__(self, store: CypherGraphStore) -> None:
         self._store = store
 
     def __call__(self, context: Ch04Context) -> None:
         context.rows = self._store.query(context.cypher)
-        logger.info(f"{len(context.rows)} rows")
-        for row in context.rows:
-            logger.info(row)
+        trace.table("rows", context.rows)
 
 
-def main(process_name: str) -> None:
-    # Windows defaults stdout/the log file to the cp1252 codepage, which
-    # can't encode some names in the movies dataset (e.g. "Miloš Forman");
-    # force UTF-8 so those log lines don't get silently dropped.
-    for stream in (sys.stdout, sys.stderr):
-        if isinstance(stream, io.TextIOWrapper):
-            stream.reconfigure(encoding="utf-8")
+def main(process_name: str, verbose: bool) -> None:
+    with RunLogging(
+        process_name,
+        LOG_DIR,
+        title="ch04 · text2cypher over the movies graph",
+        details={"model": DEFAULT_ANSWER_MODEL, "question": QUESTION},
+        verbose=verbose,
+    ) as run:
+        load_dotenv()
+        settings = Settings.from_env()
+        llm = OpenAILLMClient(OpenAI(api_key=settings.openai_api_key), usage=run.usage)
 
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    logzero.logfile(LOG_DIR / f"{process_name}.log", encoding="utf-8")
+        # Kept apart from ch02/ch03's databases: seeding drops and recreates
+        # its tables on every run.
+        db_path = settings.kuzu_db_path.with_name(f"{settings.kuzu_db_path.name}_ch04")
+        with KuzuCypherGraphStore(db_path) as store:
+            with trace.section("Seed the movies graph"):
+                MovieGraphSeeder(store).seed()
+                schema = store.get_schema()
+                # The schema is what text2cypher's prompt shows the LLM.
+                trace.block("schema", schema.to_prompt())
 
-    load_dotenv()
-    settings = Settings.from_env()
-    llm = OpenAILLMClient(OpenAI(api_key=settings.openai_api_key))
-
-    # Kept apart from ch02/ch03's databases: seeding drops and recreates
-    # its tables on every run.
-    db_path = settings.kuzu_db_path.with_name(f"{settings.kuzu_db_path.name}_ch04")
-    with KuzuCypherGraphStore(db_path) as store:
-        MovieGraphSeeder(store).seed()
-        schema = store.get_schema()
-        logger.info(f"Schema:\n{schema.to_prompt()}")
-
-        text2cypher = Text2Cypher(
-            llm,
-            schema,
-            terminology=MOVIES_TERMINOLOGY,
-            examples=MOVIES_CYPHER_EXAMPLES,
-            model=DEFAULT_ANSWER_MODEL,
-        )
-        pipeline: Pipeline[Ch04Context] = Pipeline(
-            [GenerateCypherStep(text2cypher), ExecuteCypherStep(store)]
-        )
-        pipeline.run(Ch04Context(question=QUESTION))
+            text2cypher = Text2Cypher(
+                llm,
+                schema,
+                terminology=MOVIES_TERMINOLOGY,
+                examples=MOVIES_CYPHER_EXAMPLES,
+                model=DEFAULT_ANSWER_MODEL,
+            )
+            pipeline: Pipeline[Ch04Context] = Pipeline(
+                [GenerateCypherStep(text2cypher), ExecuteCypherStep(store)]
+            )
+            pipeline.run(Ch04Context(question=QUESTION))
 
 
 if __name__ == "__main__":
@@ -114,5 +115,6 @@ if __name__ == "__main__":
         default="ch04_text2cypher_movies",
         help="Names the log file written to logs/<process_name>.log.",
     )
+    add_verbose_argument(parser)
     args = parser.parse_args()
-    main(args.process_name)
+    main(args.process_name, args.verbose)

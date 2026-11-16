@@ -1,5 +1,10 @@
 from graphrag.evaluation.benchmark import load_benchmark
-from graphrag.evaluation.evaluator import EvaluationReport, Evaluator, ScoredSample
+from graphrag.evaluation.evaluator import (
+    EvaluationReport,
+    Evaluator,
+    ScoredSample,
+    format_score,
+)
 from graphrag.evaluation.metrics import AnswerCorrectness, ContextRecall, Faithfulness, Metric
 from graphrag.evaluation.models import BenchmarkCase, EvaluationSample
 from graphrag.evaluation.runner import BenchmarkRunner, Responder
@@ -19,6 +24,7 @@ __all__ = [
     "Responder",
     "ScoredSample",
     "StatementExtractor",
+    "format_score",
     "load_benchmark",
     "load_samples",
     "save_samples",

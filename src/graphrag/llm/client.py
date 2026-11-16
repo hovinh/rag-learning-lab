@@ -16,6 +16,7 @@ from openai.types.chat import (
 from pydantic import BaseModel
 
 from graphrag.llm.errors import LLMResponseError
+from graphrag.observability.usage import UsageMeter
 
 Message = dict[str, str]
 ToolDefinition = dict[str, Any]
@@ -90,10 +91,15 @@ class LLMClient(ABC):
 
 
 class OpenAILLMClient(LLMClient):
+    """``usage``, if given, records every call and its tokens -- what the
+    examples' trace sections and run footer report.
+    """
+
     DEFAULT_MODEL = "gpt-4o"
 
-    def __init__(self, client: OpenAI) -> None:
+    def __init__(self, client: OpenAI, *, usage: UsageMeter | None = None) -> None:
         self._client = client
+        self._usage = usage
 
     def complete(
         self,
@@ -109,6 +115,7 @@ class OpenAILLMClient(LLMClient):
             temperature=temperature,
             response_format={"type": "json_object"} if json_mode else omit,
         )
+        self._record(response)
         return response.choices[0].message.content or ""
 
     def stream(
@@ -119,9 +126,15 @@ class OpenAILLMClient(LLMClient):
             messages=cast("list[ChatCompletionMessageParam]", messages),
             temperature=temperature,
             stream=True,
+            # Usage arrives in one last chunk, which has no choices.
+            stream_options={"include_usage": True},
         )
         for chunk in stream:
             chunk = cast(ChatCompletionChunk, chunk)
+            if chunk.usage is not None:
+                self._record(chunk)
+            if not chunk.choices:
+                continue
             delta = chunk.choices[0].delta.content
             if delta:
                 yield delta
@@ -140,6 +153,7 @@ class OpenAILLMClient(LLMClient):
             temperature=temperature,
             tools=cast("list[ChatCompletionToolUnionParam]", list(tools)) or omit,
         )
+        self._record(response)
         calls = []
         for call in response.choices[0].message.tool_calls or []:
             # Custom (free-text) tool calls only come back for custom tool
@@ -170,8 +184,17 @@ class OpenAILLMClient(LLMClient):
             temperature=temperature,
             response_format=response_model,
         )
+        self._record(response)
         message = response.choices[0].message
         if message.parsed is None:
             reason = f": {message.refusal}" if message.refusal else ""
             raise LLMResponseError(f"No {response_model.__name__} in the response{reason}")
         return message.parsed
+
+    def _record(self, response: Any) -> None:
+        if self._usage is None:
+            return
+        usage = getattr(response, "usage", None)
+        self._usage.record_completion(
+            getattr(usage, "prompt_tokens", 0) or 0, getattr(usage, "completion_tokens", 0) or 0
+        )

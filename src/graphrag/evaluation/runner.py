@@ -4,13 +4,14 @@ import json
 import time
 from collections.abc import Callable, Sequence
 
-from logzero import logger
-
 from graphrag.agent.agent import AgentResponse
 from graphrag.evaluation.models import BenchmarkCase, EvaluationSample
 from graphrag.graph.cypher_store import CypherGraphStore
+from graphrag.observability import Trace
 
 Responder = Callable[[str], AgentResponse]
+
+_trace = Trace(__name__)
 
 
 class BenchmarkRunner:
@@ -30,15 +31,17 @@ class BenchmarkRunner:
         """
         samples = []
         for index, case in enumerate(cases, start=1):
-            logger.info(f"[{index}/{len(cases)}] {case.question}")
-            samples.append(self._run_case(case))
+            with _trace.section(f"Answer [{index}/{len(cases)}] {case.question}"):
+                samples.append(self._run_case(case))
         return samples
 
     def _run_case(self, case: BenchmarkCase) -> EvaluationSample:
         # default=str: Kuzu can return values JSON has no type for (e.g.
         # dates); ensure_ascii=False keeps names like "Miloš Forman" readable
         # to the judge LLM.
-        ground_truth = json.dumps(self._store.query(case.cypher), default=str, ensure_ascii=False)
+        rows = self._store.query(case.cypher)
+        _trace.summary("truth", rows)
+        ground_truth = json.dumps(rows, default=str, ensure_ascii=False)
         start = time.perf_counter()
         try:
             response = self._respond(case.question)
@@ -46,7 +49,7 @@ class BenchmarkRunner:
         # error is recorded on the sample (the book catches everything too,
         # but drops the error and scores the row as "I don't know").
         except Exception as exc:  # noqa: BLE001
-            logger.exception(f"Answering {case.question!r} failed")
+            _trace.exception("Answering failed")
             return EvaluationSample(
                 case.question, ground_truth, "", [], time.perf_counter() - start, repr(exc)
             )

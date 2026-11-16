@@ -15,20 +15,18 @@ prompting fit together. Requires OPENAI_API_KEY in .env (see
 from __future__ import annotations
 
 import argparse
-import io
-import sys
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import logzero
-from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, PDF_URL
+from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, PDF_URL, add_verbose_argument
 from dotenv import load_dotenv
-from logzero import logger
 from openai import OpenAI
 
 from graphrag.graph import KuzuParentChildGraphStore, ParentMatch
 from graphrag.ingestion import PdfLoader, SectionSplitter, TextChunker
 from graphrag.llm import OpenAILLMClient, QueryRewriter, TokenCounter
+from graphrag.observability import RunLogging, Trace
 from graphrag.pipeline import AnswerStep, LoadPdfTextStep, Pipeline
 from graphrag.retrieval import Embedder, OpenAIEmbedder
 from graphrag.settings import Settings
@@ -37,6 +35,8 @@ PDF_PATH = Path("data/ch03-downloaded.pdf")
 QUESTION = "Who was Einstein's collaborator on sound reproduction system?"
 PARENT_CHUNK_SIZE, PARENT_OVERLAP = 2000, 40
 CHILD_CHUNK_SIZE, CHILD_OVERLAP = 500, 20
+
+trace = Trace(__name__)
 
 
 @dataclass
@@ -53,20 +53,32 @@ class Ch03Context:
 
 
 class SectionSplitStep:
+    title = "Split into titled sections"
+
     def __init__(self, splitter: SectionSplitter, token_counter: TokenCounter) -> None:
         self._splitter = splitter
         self._token_counter = token_counter
 
     def __call__(self, context: Ch03Context) -> None:
         context.sections = self._splitter.split(context.text)
-        logger.info(f"{len(context.sections)} sections")
-        # The book prints these to show why sections are chunked further:
-        # some are far longer than one passage of context should be.
+        # The book prints the token counts to show why sections are
+        # chunked further: some are far longer than one passage of context
+        # should be.
         tokens = [self._token_counter.count(section) for section in context.sections]
-        logger.info(f"Tokens per section: {tokens}")
+        trace.fields(
+            {
+                "sections": len(context.sections),
+                "tokens": (
+                    f"min {min(tokens)}, max {max(tokens)}, mean {sum(tokens) / len(tokens):.0f}"
+                ),
+            }
+        )
+        trace.field("per section", tokens, level=logging.DEBUG)
 
 
 class ParentChildChunkStep:
+    title = "Chunk into parents and children"
+
     def __init__(self, parent_chunker: TextChunker, child_chunker: TextChunker) -> None:
         self._parent_chunker = parent_chunker
         self._child_chunker = child_chunker
@@ -76,9 +88,13 @@ class ParentChildChunkStep:
         for section in context.sections:
             parents.extend(self._parent_chunker.split(section))
         context.parents = parents
-        logger.info(f"{len(context.parents)} parent chunks")
-
         context.children_per_parent = [self._child_chunker.split(parent) for parent in parents]
+        trace.fields(
+            {
+                "parents": len(context.parents),
+                "children": sum(len(children) for children in context.children_per_parent),
+            }
+        )
 
 
 class EmbedChildrenStep:
@@ -89,18 +105,24 @@ class EmbedChildrenStep:
         context.child_embeddings_per_parent = [
             self._embedder.embed(children) for children in context.children_per_parent
         ]
+        embedded = sum(len(vectors) for vectors in context.child_embeddings_per_parent)
+        trace.field("embedded", f"{embedded} child chunks")
 
 
 class StepBackRewriteStep:
+    title = "Step-back rewrite"
+
     def __init__(self, query_rewriter: QueryRewriter) -> None:
         self._query_rewriter = query_rewriter
 
     def __call__(self, context: Ch03Context) -> None:
         context.step_back_question = self._query_rewriter.step_back(context.question)
-        logger.info(f"Step-back question: {context.step_back_question}")
+        trace.fields({"question": context.question, "step-back": context.step_back_question})
 
 
 class ParentRetrievalStep:
+    title = "Parent retrieval (match children, return parents)"
+
     def __init__(self, store: KuzuParentChildGraphStore, embedder: Embedder, k: int) -> None:
         self._store = store
         self._embedder = embedder
@@ -111,56 +133,61 @@ class ParentRetrievalStep:
         context.matches = self._store.parent_retrieval(step_back_embedding, k=self._k)
 
 
-def main(process_name: str) -> None:
-    # Windows defaults stdout/the log file to the cp1252 codepage, which
-    # can't encode punctuation pdfplumber pulls out of PDFs (curly quotes,
-    # U+2010 hyphens); force UTF-8 so those log lines don't get silently
-    # dropped with a "Logging error" printed to the terminal.
-    for stream in (sys.stdout, sys.stderr):
-        if isinstance(stream, io.TextIOWrapper):
-            stream.reconfigure(encoding="utf-8")
+def main(process_name: str, verbose: bool) -> None:
+    with RunLogging(
+        process_name,
+        LOG_DIR,
+        title="ch03 · Parent-child retrieval with step-back prompting",
+        details={"model": DEFAULT_ANSWER_MODEL, "question": QUESTION},
+        verbose=verbose,
+    ) as run:
+        load_dotenv()
+        settings = Settings.from_env()
+        openai_client = OpenAI(api_key=settings.openai_api_key)
+        embedder = OpenAIEmbedder(openai_client, usage=run.usage)
+        llm = OpenAILLMClient(openai_client, usage=run.usage)
+        query_rewriter = QueryRewriter(llm)
 
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    logzero.logfile(LOG_DIR / f"{process_name}.log", encoding="utf-8")
+        context = Ch03Context(question=QUESTION)
 
-    load_dotenv()
-    settings = Settings.from_env()
-    openai_client = OpenAI(api_key=settings.openai_api_key)
-    embedder = OpenAIEmbedder(openai_client)
-    llm = OpenAILLMClient(openai_client)
-    query_rewriter = QueryRewriter(llm)
+        with trace.section("Ingest the PDF"):
+            ingestion: Pipeline[Ch03Context] = Pipeline(
+                [
+                    LoadPdfTextStep(PdfLoader(), PDF_URL, PDF_PATH),
+                    SectionSplitStep(SectionSplitter(), TokenCounter()),
+                    ParentChildChunkStep(
+                        parent_chunker=TextChunker(
+                            chunk_size=PARENT_CHUNK_SIZE, overlap=PARENT_OVERLAP
+                        ),
+                        child_chunker=TextChunker(
+                            chunk_size=CHILD_CHUNK_SIZE, overlap=CHILD_OVERLAP
+                        ),
+                    ),
+                    EmbedChildrenStep(embedder),
+                ]
+            )
+            ingestion.run(context)
 
-    context = Ch03Context(question=QUESTION)
+        # Kept apart from ch02's database so running one chapter doesn't wipe
+        # the other's corpus (every replace_* call rebuilds its store).
+        db_path = settings.kuzu_db_path.with_name(f"{settings.kuzu_db_path.name}_ch03")
+        with KuzuParentChildGraphStore(db_path, embedding_dim=embedder.dimensions) as store:
+            with trace.section("Store the parent/child hierarchy in Kuzu"):
+                store.replace_parents(
+                    context.parents,
+                    context.children_per_parent,
+                    context.child_embeddings_per_parent,
+                )
 
-    ingestion: Pipeline[Ch03Context] = Pipeline(
-        [
-            LoadPdfTextStep(PdfLoader(), PDF_URL, PDF_PATH),
-            SectionSplitStep(SectionSplitter(), TokenCounter()),
-            ParentChildChunkStep(
-                parent_chunker=TextChunker(chunk_size=PARENT_CHUNK_SIZE, overlap=PARENT_OVERLAP),
-                child_chunker=TextChunker(chunk_size=CHILD_CHUNK_SIZE, overlap=CHILD_OVERLAP),
-            ),
-            EmbedChildrenStep(embedder),
-        ]
-    )
-    ingestion.run(context)
-
-    # Kept apart from ch02's database so running one chapter doesn't wipe
-    # the other's corpus (every replace_* call rebuilds its store).
-    db_path = settings.kuzu_db_path.with_name(f"{settings.kuzu_db_path.name}_ch03")
-    with KuzuParentChildGraphStore(db_path, embedding_dim=embedder.dimensions) as store:
-        store.replace_parents(
-            context.parents, context.children_per_parent, context.child_embeddings_per_parent
-        )
-
-        retrieval: Pipeline[Ch03Context] = Pipeline(
-            [
-                StepBackRewriteStep(query_rewriter),
-                ParentRetrievalStep(store, embedder, k=4),
-                AnswerStep(llm, model=DEFAULT_ANSWER_MODEL, label="Parent retrieval (step-back)"),
-            ]
-        )
-        retrieval.run(context)
+            with trace.section("Answer with step-back + parent retrieval"):
+                retrieval: Pipeline[Ch03Context] = Pipeline(
+                    [
+                        StepBackRewriteStep(query_rewriter),
+                        ParentRetrievalStep(store, embedder, k=4),
+                        AnswerStep(llm, model=DEFAULT_ANSWER_MODEL),
+                    ]
+                )
+                retrieval.run(context)
 
 
 if __name__ == "__main__":
@@ -170,5 +197,6 @@ if __name__ == "__main__":
         default="ch03_parent_child_stepback_rag",
         help="Names the log file written to logs/<process_name>.log.",
     )
+    add_verbose_argument(parser)
     args = parser.parse_args()
-    main(args.process_name)
+    main(args.process_name, args.verbose)

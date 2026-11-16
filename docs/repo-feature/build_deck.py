@@ -819,6 +819,7 @@ rag-learning-lab/
 │   ├── agent/           agent, query planners, tool router, critic, tools
 │   ├── evaluation/      benchmark runner, evaluator, RAGAS-style metrics
 │   ├── pipeline/        Pipeline + shared steps
+│   ├── observability/   Trace, RunLogging, UsageMeter: the run logs
 │   ├── datasets/        movies graph CSV files, benchmark, contract, Odyssey
 │   └── settings.py      Settings.from_env()
 ├── examples/            one runnable script per chapter + README.md
@@ -847,6 +848,7 @@ rag-learning-lab/
                     "pipeline\nPipeline + steps",
                     "agent\nAgent, ToolRouter, AnswerCritic",
                     "evaluation\nBenchmarkRunner, Evaluator, metrics",
+                    "observability\nTrace, RunLogging, UsageMeter",
                 ),
             ),
             Layer(
@@ -973,9 +975,18 @@ rag-learning-lab/
                 (
                     "BenchmarkCase, load_benchmark, BenchmarkRunner, Responder, EvaluationSample, "
                     "Evaluator, EvaluationReport, ScoredSample, Metric, AnswerCorrectness, "
-                    "ContextRecall, Faithfulness, StatementExtractor, save_samples, load_samples"
+                    "ContextRecall, Faithfulness, StatementExtractor, save_samples, load_samples, "
+                    "format_score"
                 ),
                 "ch08 benchmark answers, LLM-judge metrics, reports, saved samples",
+            ),
+            (
+                "graphrag.observability",
+                (
+                    "Trace, Progress, RunLogging, TraceFormatter, UsageMeter, Usage, preview, "
+                    "render_table, format_duration, format_count"
+                ),
+                "Sectioned, timed run logs; LLM and embedding usage counts",
             ),
             (
                 "graphrag.pipeline",
@@ -1066,30 +1077,83 @@ rag-learning-lab/
                 "`HybridSearchStep`) live in the script"
             ),
             "Stores are context managers, so the database connection is always closed",
-            "`--process-name` names the log file, `logs/<process_name>.log` (logzero)",
+            (
+                "`RunLogging` wraps the whole run; clients get `usage=run.usage` so the log "
+                "counts every LLM call"
+            ),
         ),
         code="""
-load_dotenv()
-settings = Settings.from_env()
-openai_client = OpenAI(api_key=settings.openai_api_key)
-embedder = OpenAIEmbedder(openai_client)
-llm = OpenAILLMClient(openai_client)
+with RunLogging(process_name, LOG_DIR,
+                verbose=verbose) as run:
+    load_dotenv()
+    settings = Settings.from_env()
+    client = OpenAI(api_key=settings.openai_api_key)
+    embedder = OpenAIEmbedder(client, usage=run.usage)
+    llm = OpenAILLMClient(client, usage=run.usage)
 
-context = Ch02Context(question=QUESTION)
-Pipeline([
-    LoadPdfTextStep(PdfLoader(), PDF_URL, PDF_PATH),
-    ChunkStep(TextChunker(chunk_size=500, overlap=40)),
-    EmbedChunksStep(embedder),
-]).run(context)
-
-with KuzuGraphStore(settings.kuzu_db_path,
-                    embedding_dim=embedder.dimensions) as store:
-    store.replace_chunks(context.chunks, context.embeddings)
-    q = embedder.embed([context.question])[0]
+    context = Ch02Context(question=QUESTION)
     Pipeline([
-        HybridSearchStep(store, context.question, q, k=4),
-        AnswerStep(llm, model="gpt-4o", label="Hybrid"),
+        LoadPdfTextStep(PdfLoader(), PDF_URL, PDF_PATH),
+        ChunkStep(TextChunker(chunk_size=500, overlap=40)),
+        EmbedChunksStep(embedder),
     ]).run(context)
+
+    with KuzuGraphStore(settings.kuzu_db_path,
+                        embedding_dim=embedder.dimensions) as store:
+        store.replace_chunks(context.chunks, context.embeddings)
+        q = embedder.embed([context.question])[0]
+        Pipeline([
+            HybridSearchStep(store, context.question, q, k=4),
+            AnswerStep(llm, model="gpt-4o"),
+        ]).run(context)
+""",
+    ),
+    CodeSlide(
+        title="Reading a run's log",
+        subtitle="`graphrag.observability`: every example logs the same indented, timed tree",
+        bullets=(
+            (
+                "`--process-name` names `logs/<process_name>.log`, overwritten each run; "
+                "`--verbose` adds full payloads to the console"
+            ),
+            (
+                "`┌ … └` is a section (a pipeline step, a question, an agent round), closed with "
+                "its time and LLM usage"
+            ),
+            (
+                "INFO lines are summaries (`2 rows: …`); the file also keeps the full payload "
+                "behind each one (DEBUG)"
+            ),
+            "`⚠` marks warnings; a crashed run logs its traceback and ends `✗ failed`",
+            (
+                "Library code logs through `Trace(__name__)` and stays silent until a script opens "
+                "`RunLogging`"
+            ),
+            "The footer totals LLM and embedding calls and tokens, counted by `UsageMeter`",
+        ),
+        code_size=10.5,
+        code="""
+══════════════════════════════════════════════
+ ch05 · Agentic RAG over the movies graph
+ model     gpt-4o
+══════════════════════════════════════════════
+21:25:50 ┌ Question 2/2
+21:25:50 │ question  How many directors and producers…
+21:25:51 │ ┌ Gather
+21:25:51 │ │ plan      How many directors and producers…
+21:25:52 │ │ tool      text2cypher(question="…")
+21:25:54 │ │ cypher    MATCH (p:Person)-[:DIRECTED]->(:Movie)
+         │ │           WITH COUNT(DISTINCT p) AS directorCount
+         │ │           …
+21:25:54 │ │ result    directorCount=10, producerCount=4
+21:25:54 │ └ 2.9s · 3 LLM calls · 1.3k tokens
+21:25:55 │ critique  nothing missing
+21:25:55 │ answer    There are 10 directors and 4 producers…
+21:25:55 └ 4.5s · 5 LLM calls · 2.0k tokens
+══════════════════════════════════════════════
+ ✓ finished in 11.9s
+ LLM       11 calls · 5.3k tokens (5.0k in, 285 out)
+══════════════════════════════════════════════
 """,
     ),
     TableSlide(
@@ -1534,6 +1598,7 @@ SET node.community_id = louvain_id;
                 "`graphrag`, which ships `py.typed`"
             ),
             "`tests/docs/test_repo_feature_deck.py` keeps this deck in sync with the code",
+            "`tests/observability/` renders traces into a buffer and checks the exact lines",
         ),
         code="""
 # tests/agent/test_router.py: queue the LLM's

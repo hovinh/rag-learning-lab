@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from graphrag.pipeline.pipeline import Pipeline
+from graphrag.pipeline.pipeline import Pipeline, step_title
 
 
 @dataclass
@@ -43,6 +43,22 @@ def test_run_returns_the_context():
     result = Pipeline([append_a]).run(context)
 
     assert result is context
+
+
+class ExtractGraphStep:
+    def __call__(self, context: FakeContext) -> None: ...
+
+
+class TitledStep:
+    title = "My own title"
+
+    def __call__(self, context: FakeContext) -> None: ...
+
+
+def test_step_title_comes_from_title_class_name_or_function_name():
+    assert step_title(ExtractGraphStep()) == "Extract graph"
+    assert step_title(TitledStep()) == "My own title"
+    assert step_title(append_a) == "Append a"
 
 
 def test_run_with_no_steps_is_a_noop():

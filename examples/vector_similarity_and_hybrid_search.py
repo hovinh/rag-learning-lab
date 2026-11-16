@@ -13,26 +13,25 @@ Run from the repo root:
 from __future__ import annotations
 
 import argparse
-import io
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import logzero
-from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, PDF_URL
+from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, PDF_URL, add_verbose_argument
 from dotenv import load_dotenv
-from logzero import logger
 from openai import OpenAI
 
 from graphrag.graph import ChunkMatch, GraphStore, KuzuGraphStore
 from graphrag.ingestion import PdfLoader, TextChunker
 from graphrag.llm import OpenAILLMClient
+from graphrag.observability import RunLogging, Trace
 from graphrag.pipeline import AnswerStep, LoadPdfTextStep, Pipeline
 from graphrag.retrieval import Embedder, OpenAIEmbedder
 from graphrag.settings import Settings
 
 PDF_PATH = Path("data/ch02-downloaded.pdf")
 QUESTION = "At what time was Einstein really interested in experimental works?"
+
+trace = Trace(__name__)
 
 
 @dataclass
@@ -51,7 +50,7 @@ class ChunkStep:
 
     def __call__(self, context: Ch02Context) -> None:
         context.chunks = self._chunker.split(context.text)
-        logger.info(f"{len(context.chunks)} chunks")
+        trace.field("chunks", len(context.chunks))
 
 
 class EmbedChunksStep:
@@ -60,6 +59,7 @@ class EmbedChunksStep:
 
     def __call__(self, context: Ch02Context) -> None:
         context.embeddings = self._embedder.embed(context.chunks)
+        trace.field("embedded", f"{len(context.embeddings)} chunks")
 
 
 class VectorSearchStep:
@@ -73,6 +73,8 @@ class VectorSearchStep:
 
 
 class HybridSearchStep:
+    title = "Hybrid search (vector + keyword)"
+
     def __init__(
         self, store: GraphStore, question: str, question_embedding: list[float], k: int
     ) -> None:
@@ -87,55 +89,55 @@ class HybridSearchStep:
         )
 
 
-def main(process_name: str) -> None:
-    # Windows defaults stdout/the log file to the cp1252 codepage, which
-    # can't encode punctuation pdfplumber pulls out of PDFs (curly quotes,
-    # U+2010 hyphens); force UTF-8 so those log lines don't get silently
-    # dropped with a "Logging error" printed to the terminal.
-    for stream in (sys.stdout, sys.stderr):
-        if isinstance(stream, io.TextIOWrapper):
-            stream.reconfigure(encoding="utf-8")
+def main(process_name: str, verbose: bool) -> None:
+    with RunLogging(
+        process_name,
+        LOG_DIR,
+        title="ch02 · PDF ingestion, vector search and hybrid search",
+        details={"model": DEFAULT_ANSWER_MODEL, "question": QUESTION},
+        verbose=verbose,
+    ) as run:
+        load_dotenv()
+        settings = Settings.from_env()
+        openai_client = OpenAI(api_key=settings.openai_api_key)
+        embedder = OpenAIEmbedder(openai_client, usage=run.usage)
+        llm = OpenAILLMClient(openai_client, usage=run.usage)
 
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    logzero.logfile(LOG_DIR / f"{process_name}.log", encoding="utf-8")
+        context = Ch02Context(question=QUESTION)
 
-    load_dotenv()
-    settings = Settings.from_env()
-    openai_client = OpenAI(api_key=settings.openai_api_key)
-    embedder = OpenAIEmbedder(openai_client)
-    llm = OpenAILLMClient(openai_client)
+        with trace.section("Ingest the PDF"):
+            ingestion: Pipeline[Ch02Context] = Pipeline(
+                [
+                    LoadPdfTextStep(PdfLoader(), PDF_URL, PDF_PATH),
+                    ChunkStep(TextChunker(chunk_size=500, overlap=40)),
+                    EmbedChunksStep(embedder),
+                ]
+            )
+            ingestion.run(context)
 
-    context = Ch02Context(question=QUESTION)
+        with KuzuGraphStore(settings.kuzu_db_path, embedding_dim=embedder.dimensions) as store:
+            with trace.section("Store chunks in Kuzu"):
+                store.replace_chunks(context.chunks, context.embeddings)
 
-    ingestion: Pipeline[Ch02Context] = Pipeline(
-        [
-            LoadPdfTextStep(PdfLoader(), PDF_URL, PDF_PATH),
-            ChunkStep(TextChunker(chunk_size=500, overlap=40)),
-            EmbedChunksStep(embedder),
-        ]
-    )
-    ingestion.run(context)
+            question_embedding = embedder.embed([context.question])[0]
 
-    with KuzuGraphStore(settings.kuzu_db_path, embedding_dim=embedder.dimensions) as store:
-        store.replace_chunks(context.chunks, context.embeddings)
+            with trace.section("Answer with vector search"):
+                vector_pipeline: Pipeline[Ch02Context] = Pipeline(
+                    [
+                        VectorSearchStep(store, question_embedding, k=4),
+                        AnswerStep(llm, model=DEFAULT_ANSWER_MODEL),
+                    ]
+                )
+                vector_pipeline.run(context)
 
-        question_embedding = embedder.embed([context.question])[0]
-
-        vector_pipeline: Pipeline[Ch02Context] = Pipeline(
-            [
-                VectorSearchStep(store, question_embedding, k=4),
-                AnswerStep(llm, model=DEFAULT_ANSWER_MODEL, label="Vector search"),
-            ]
-        )
-        vector_pipeline.run(context)
-
-        hybrid_pipeline: Pipeline[Ch02Context] = Pipeline(
-            [
-                HybridSearchStep(store, context.question, question_embedding, k=4),
-                AnswerStep(llm, model=DEFAULT_ANSWER_MODEL, label="Hybrid search"),
-            ]
-        )
-        hybrid_pipeline.run(context)
+            with trace.section("Answer with hybrid search"):
+                hybrid_pipeline: Pipeline[Ch02Context] = Pipeline(
+                    [
+                        HybridSearchStep(store, context.question, question_embedding, k=4),
+                        AnswerStep(llm, model=DEFAULT_ANSWER_MODEL),
+                    ]
+                )
+                hybrid_pipeline.run(context)
 
 
 if __name__ == "__main__":
@@ -145,5 +147,6 @@ if __name__ == "__main__":
         default="ch02_pdf_qa",
         help="Names the log file written to logs/<process_name>.log.",
     )
+    add_verbose_argument(parser)
     args = parser.parse_args()
-    main(args.process_name)
+    main(args.process_name, args.verbose)

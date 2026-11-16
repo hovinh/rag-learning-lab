@@ -60,6 +60,7 @@ src/
     extraction/      # Pydantic extraction models, StructuredExtractor, ContractGraphImporter,
                      # ch07's entity extraction, summarization, communities and reports
     evaluation/      # ch08: benchmark loading, BenchmarkRunner, LLM-judged Metrics, Evaluator
+    observability/   # Trace (structured, sectioned logging), RunLogging, UsageMeter
 tests/
   ...                # mirrors src/graphrag structure
 docs/
@@ -98,6 +99,18 @@ they should not contain business logic that isn't otherwise unit-tested.
   `python-dotenv`) at the composition root (e.g. `main.py` / a `Settings`
   class), not scattered `os.environ.get(...)` calls inside business logic
   classes.
+
+## Logging
+
+- Library code logs through a module-level `Trace(__name__)`
+  (`graphrag.observability`), never `print` and never by configuring
+  handlers itself. Only the application sets logging up, with
+  `RunLogging`.
+- INFO tells the story in short lines (a summary, a preview, a count). The
+  full payload behind it goes to DEBUG (`Trace.summary` does both), which
+  the log file always records.
+- Group work in `Trace.section(...)` so it's indented and timed. Pipeline
+  steps get one automatically.
 
 ## Testing
 
