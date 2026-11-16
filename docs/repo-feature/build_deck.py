@@ -775,11 +775,15 @@ SLIDES: tuple[SlideSpec, ...] = (
         ),
         bullets=(
             "Each arrow `-[:ACTED_IN]->` becomes two joins through a link table",
-            "Undirected edges: `(s)-[r]-(t)` instead of a `UNION` of both directions "
-            "(`DescriptionSummarizer`)",
+            (
+                "Undirected edges: `(s)-[r]-(t)` instead of a `UNION` of both directions "
+                "(`DescriptionSummarizer`)"
+            ),
             "Variable-length paths: `-[*1..3]->` instead of a recursive CTE",
-            "Multi-hop retrieval (chunk → entity → community in `LocalSearch`) is one more "
-            "pattern per hop, not more joins",
+            (
+                "Multi-hop retrieval (chunk → entity → community in `LocalSearch`) is one more "
+                "pattern per hop, not more joins"
+            ),
         ),
     ),
     BulletSlide(
@@ -787,21 +791,31 @@ SLIDES: tuple[SlideSpec, ...] = (
         subtitle="Inherited from the book, kept because the data is a graph",
         bullets=(
             "Inherited from the book",
-            "  ch04–ch08 are written in Cypher; Kuzu speaks it, so queries port with small "
-            "dialect fixes (backticked `cast`, directed `MERGE`, no APOC)",
+            (
+                "  ch04–ch08 are written in Cypher; Kuzu speaks it, so queries port with small "
+                "dialect fixes (backticked `cast`, directed `MERGE`, no APOC)"
+            ),
             "Relationship-shaped questions",
-            "  Chunk → entity → community and actor → movie ← director read as patterns, "
-            "not join chains",
+            (
+                "  Chunk → entity → community and actor → movie ← director read as patterns, "
+                "not join chains"
+            ),
             "Easier for the LLM to write (text2cypher)",
-            "  The schema prompt is just `(:Person)-[:ACTED_IN]->(:Movie)`, with no join keys "
-            "to guess; `Text2Cypher.correct()` retries with the database's error message",
+            (
+                "  The schema prompt is just `(:Person)-[:ACTED_IN]->(:Movie)`, with no join keys "
+                "to guess; `Text2Cypher.correct()` retries with the database's error message"
+            ),
             "Trade-offs",
-            "  Kuzu stores node and rel tables underneath: this picks a query language, "
-            "not a storage model",
+            (
+                "  Kuzu stores node and rel tables underneath: this picks a query language, "
+                "not a storage model"
+            ),
             "  Cypher dialects differ more than SQL's, and SQL is far more widely known",
             "  Flat aggregations (community sizes) read the same either way",
-            "  `CypherGraphStore` commits to Cypher, so a SQL backend would change the "
-            "interface too",
+            (
+                "  `CypherGraphStore` commits to Cypher, so a SQL backend would change the "
+                "interface too"
+            ),
         ),
     ),
     CodeSlide(
