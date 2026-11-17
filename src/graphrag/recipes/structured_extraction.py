@@ -23,7 +23,7 @@ class _ExtractionContext(Generic[ModelT]):
 
 
 class StructuredGraphExtraction(Generic[ModelT]):
-    """ch06 as a reusable pipeline: extract one typed model per document
+    """ch06 as a recipe: extract one typed model per document
     with structured outputs, and write each into the graph with
     ``import_one`` (e.g. ``ContractGraphImporter.import_contract``).
 

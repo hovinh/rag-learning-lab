@@ -1,5 +1,5 @@
 """Re-implementation of ch04 (template/kg-rag/notebooks/ch04.ipynb) with
-the predefined ``Text2CypherQA`` pipeline: seed a small movies graph into
+the ``Text2CypherQA`` recipe: seed a small movies graph into
 Kuzu, read its schema, have the LLM generate a Cypher query for a
 question (text2cypher, with a terminology mapping and a few-shot example),
 then run that query against the graph.
@@ -27,7 +27,7 @@ from graphrag.domains.movies import (
 )
 from graphrag.graph import KuzuCypherGraphStore
 from graphrag.observability import RunLogging, Trace
-from graphrag.pipelines import Text2CypherQA
+from graphrag.recipes import Text2CypherQA
 from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
 

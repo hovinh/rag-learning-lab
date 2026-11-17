@@ -9,7 +9,7 @@ from graphrag.graph.models import GraphSchema
 from graphrag.graph.text2cypher import CypherExample, Text2Cypher
 from graphrag.llm.client import LLMClient, OpenAILLMClient
 from graphrag.pipeline import ExecuteCypherStep, GenerateCypherStep, Pipeline
-from graphrag.pipelines.models import CypherAnswer
+from graphrag.recipes.models import CypherAnswer
 
 
 @dataclass
@@ -20,7 +20,7 @@ class _CypherContext:
 
 
 class Text2CypherQA:
-    """ch04 as a reusable pipeline: the LLM writes Cypher for a question
+    """ch04 as a recipe: the LLM writes Cypher for a question
     against ``store``'s schema, which then runs on the graph.
 
     The schema is read when this is built, so ``store`` must already hold

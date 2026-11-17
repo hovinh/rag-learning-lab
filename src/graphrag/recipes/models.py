@@ -6,9 +6,9 @@ from typing import Any
 
 @dataclass(frozen=True)
 class RagAnswer:
-    """A predefined pipeline's answer, with the retrieved contexts it was
+    """A recipe's answer, with the retrieved contexts it was
     written from -- the shape ``BenchmarkRunner`` evaluates, so any
-    pipeline's ``query`` can be benchmarked.
+    recipe's ``query`` can be benchmarked.
     """
 
     question: str

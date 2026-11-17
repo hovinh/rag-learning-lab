@@ -1,5 +1,5 @@
 """Re-implementation of ch02 (template/kg-rag/notebooks/ch02.ipynb) with
-the predefined ``VectorRag`` pipeline: download a PDF, chunk + embed it
+the ``VectorRag`` recipe: download a PDF, chunk + embed it
 into Kuzu, then answer a question with plain vector search and with
 hybrid (vector + keyword) search.
 
@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 from graphrag.graph import KuzuGraphStore
 from graphrag.ingestion import PdfSource, TextChunker
 from graphrag.observability import RunLogging, Trace
-from graphrag.pipelines import VectorRag
+from graphrag.recipes import VectorRag
 from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
 

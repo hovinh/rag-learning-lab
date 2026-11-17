@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from graphrag.ingestion.models import Chunk
-from graphrag.pipelines.models import RagAnswer
+from graphrag.recipes.models import RagAnswer
 from graphrag.retrieval.retriever import ScoredMatch
 
 

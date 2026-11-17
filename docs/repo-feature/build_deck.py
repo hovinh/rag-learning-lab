@@ -641,7 +641,7 @@ SLIDES: tuple[SlideSpec, ...] = (
     TableSlide(
         title="From the book to this repo",
         subtitle="One example script per chapter, built from library classes",
-        header=("Ch.", "Topic", "Example script (examples/)", "Pipeline: main classes"),
+        header=("Ch.", "Topic", "Example script (examples/)", "Recipe: main classes"),
         widths=(0.85, 2.5, 4.15, 4.8),
         font_size=12,
         rows=(
@@ -833,7 +833,7 @@ rag-learning-lab/
 │   ├── agent/           agent, query planners, tool router, critic, tools
 │   ├── evaluation/      benchmark runner, evaluator, RAGAS-style metrics
 │   ├── pipeline/        Pipeline runner + reusable steps
-│   ├── pipelines/       predefined pipelines, one per chapter
+│   ├── recipes/         predefined pipelines, one per chapter
 │   ├── observability/   Trace, RunLogging, UsageMeter: the run logs
 │   ├── domains/         domain packs: movies, contracts, odyssey
 │   ├── services.py      OpenAIServices: LLM client + embedder
@@ -859,12 +859,12 @@ rag-learning-lab/
                 ),
             ),
             Layer(
-                "Domains, pipelines",
+                "Domains, recipes",
                 (
                     "domains.movies\nseeder, tools, scope, benchmark",
                     "domains.contracts\nmodel, importer, prompt",
                     "domains.odyssey\ncorpus, entity types",
-                    "pipelines\nVectorRag, GraphRag, AgenticRag, …",
+                    "recipes\nVectorRag, GraphRag, AgenticRag, …",
                 ),
             ),
             Layer(
@@ -1029,13 +1029,13 @@ rag-learning-lab/
                 "Runs steps over a context object",
             ),
             (
-                "graphrag.pipelines",
+                "graphrag.recipes",
                 (
                     "VectorRag, SearchMode, ParentChildRag, Text2CypherQA, "
                     "StructuredGraphExtraction, GraphRag, AgenticRag, RagEvaluation, RagAnswer, "
                     "CypherAnswer"
                 ),
-                "Predefined pipelines: index once, query on every later run",
+                "Recipes (predefined pipelines): index once, query on every later run",
             ),
             (
                 "graphrag.domains",
@@ -1137,11 +1137,11 @@ rag-learning-lab/
         ),
     ),
     TableSlide(
-        title="Predefined pipelines",
+        title="Recipes",
         subtitle=(
-            "`graphrag.pipelines`: each chapter's flow as one reusable, domain-agnostic class"
+            "`graphrag.recipes`: predefined pipelines, each chapter's flow as one reusable class"
         ),
-        header=("Pipeline", "Built from", "Index (once)", "Query"),
+        header=("Recipe", "Built from", "Index (once)", "Query"),
         widths=(2.6, 3.4, 3.3, 3.0),
         font_size=11.5,
         rows=(
@@ -1190,7 +1190,7 @@ rag-learning-lab/
         ),
         caption=(
             "Indexes persist in their Kuzu database: `is_indexed()` says whether to index. Every "
-            "`query` returns a RagAnswer (answer + contexts), so any pipeline can be benchmarked."
+            "`query` returns a RagAnswer (answer + contexts), so any recipe can be benchmarked."
         ),
     ),
     TableSlide(
@@ -1257,7 +1257,7 @@ rag-learning-lab/
     ),
     CodeSlide(
         title="How a script is wired",
-        subtitle="Composition root + a predefined pipeline, from `examples/vector_similarity_and_hybrid_search.py`",
+        subtitle="Composition root + a recipe, from `examples/vector_similarity_and_hybrid_search.py`",
         bullets=(
             (
                 "`Settings.from_env()` reads `.env` once: `OPENAI_API_KEY` (required) and "
@@ -1272,12 +1272,12 @@ rag-learning-lab/
                 "embedder, so `RunLogging` counts every call"
             ),
             (
-                "`--reindex` (or an empty database, `is_indexed()` false) makes the pipeline "
+                "`--reindex` (or an empty database, `is_indexed()` false) makes the recipe "
                 "index; otherwise the index kept in Kuzu is reused"
             ),
             (
-                "Inside, `VectorRag` is a Pipeline of steps from `graphrag.pipeline`; each step "
-                "still logs as its own section"
+                "Inside, the `VectorRag` recipe is a Pipeline of steps from `graphrag.pipeline`; each "
+                "step still logs as its own section"
             ),
             "Stores are context managers, so the database connection is always closed",
         ),

@@ -4,7 +4,7 @@ from graphrag.graph.kuzu_parent_child_store import KuzuParentChildGraphStore
 from graphrag.graph.kuzu_store import KuzuGraphStore
 from graphrag.ingestion.chunker import TextChunker
 from graphrag.ingestion.sources import DocumentSource
-from graphrag.pipelines import ParentChildRag, RagAnswer, VectorRag
+from graphrag.recipes import ParentChildRag, RagAnswer, VectorRag
 
 
 class ListSource(DocumentSource):

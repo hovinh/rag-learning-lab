@@ -12,7 +12,7 @@ from graphrag.retrieval.embedder import Embedder
 
 
 class RagEvaluation:
-    """ch08 as a reusable pipeline: ``answer`` runs benchmark questions
+    """ch08 as a recipe: ``answer`` runs benchmark questions
     through any responder (``AgenticRag.query``, ``VectorRag.query``, ...),
     computing each ground truth with the case's Cypher on ``store``; then
     ``score`` judges the answers with LLM metrics -- by default the book's

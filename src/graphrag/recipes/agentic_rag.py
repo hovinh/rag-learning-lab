@@ -13,11 +13,11 @@ from graphrag.agent import (
     ToolRouter,
 )
 from graphrag.llm.client import LLMClient, OpenAILLMClient
-from graphrag.pipelines.models import RagAnswer
+from graphrag.recipes.models import RagAnswer
 
 
 class AgenticRag:
-    """ch05 as a reusable pipeline: an ``Agent`` wired from any tools.
+    """ch05 as a recipe: an ``Agent`` wired from any tools.
     Each question is rewritten (or, with ``decompose``, split as in ch08),
     routed to a tool, critiqued for gaps with one follow-up round, then
     answered from what the tools returned.

@@ -1,5 +1,5 @@
 """Re-implementation of ch07 (template/kg-rag/notebooks/ch07.ipynb) with
-the predefined ``GraphRag`` pipeline: Microsoft-style GraphRAG over
+the ``GraphRag`` recipe: Microsoft-style GraphRAG over
 Homer's Odyssey. Have the LLM extract entities and relationships from
 each chunk with no predefined schema, summarize their descriptions,
 cluster the entities into communities (Louvain) and write a report per
@@ -31,7 +31,7 @@ from graphrag.graph import KuzuCypherGraphStore
 from graphrag.ingestion import TextChunker
 from graphrag.llm import TokenCounter
 from graphrag.observability import RunLogging, Trace
-from graphrag.pipelines import GraphRag
+from graphrag.recipes import GraphRag
 from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
 

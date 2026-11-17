@@ -58,13 +58,14 @@ To get the same output from your own script, wrap it in
 `OpenAIServices.create(settings, usage=run.usage)` so the footer can count
 calls and tokens, and log through a module-level `Trace(__name__)`.
 
-## Predefined pipelines and persistent indexes
+## Recipes and persistent indexes
 
-Each script is a thin composition root around one predefined pipeline from
-[`graphrag.pipelines`](../src/graphrag/pipelines): `VectorRag` (ch02),
+Each script is a thin composition root around one recipe (a predefined
+pipeline) from
+[`graphrag.recipes`](../src/graphrag/recipes): `VectorRag` (ch02),
 `ParentChildRag` (ch03), `Text2CypherQA` (ch04), `AgenticRag` (ch05),
 `StructuredGraphExtraction` (ch06), `GraphRag` (ch07) and `RagEvaluation`
-(ch08). The pipelines are assembled from the reusable steps in
+(ch08). The recipes are assembled from the reusable steps in
 [`graphrag.pipeline`](../src/graphrag/pipeline/steps) and know nothing
 about movies, contracts or the Odyssey. That domain knowledge lives in the
 [`graphrag.domains`](../src/graphrag/domains) packs, so a new RAG system

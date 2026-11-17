@@ -1,5 +1,5 @@
 """Re-implementation of ch03 (template/kg-rag/notebooks/ch03.ipynb) with
-the predefined ``ParentChildRag`` pipeline: split a PDF into titled
+the ``ParentChildRag`` recipe: split a PDF into titled
 sections, chunk each section into parent chunks and each parent into
 child chunks, embed only the children, store the parent/child hierarchy
 in Kuzu, then answer a question via step-back prompting + parent-level
@@ -26,7 +26,7 @@ from graphrag.graph import KuzuParentChildGraphStore
 from graphrag.ingestion import PdfSource, SectionSplitter, TextChunker
 from graphrag.llm import TokenCounter
 from graphrag.observability import RunLogging, Trace
-from graphrag.pipelines import ParentChildRag
+from graphrag.recipes import ParentChildRag
 from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
 

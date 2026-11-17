@@ -1,5 +1,5 @@
 """Re-implementation of ch06 (template/kg-rag/notebooks/ch06.ipynb) with
-the predefined ``StructuredGraphExtraction`` pipeline: extract a typed
+the ``StructuredGraphExtraction`` recipe: extract a typed
 Contract (parties, their locations and roles, dates, term, scope, amount,
 governing law) from a licensing agreement with structured outputs, import
 it into Kuzu as a small knowledge graph, then query the graph back to
@@ -30,7 +30,7 @@ from graphrag.domains.contracts import (
 from graphrag.graph import KuzuCypherGraphStore
 from graphrag.ingestion import TextFileSource
 from graphrag.observability import RunLogging, Trace
-from graphrag.pipelines import StructuredGraphExtraction
+from graphrag.recipes import StructuredGraphExtraction
 from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
 

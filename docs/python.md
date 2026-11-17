@@ -44,7 +44,7 @@ Guidelines:
   extension points a chapter doesn't need yet.
 - The exception is the reuse layer, since this repo is also the base for
   future RAG systems: `DocumentSource`, `Retriever`, `AgentScope`, the
-  step `Protocol`s and the predefined pipelines in `graphrag.pipelines`
+  step `Protocol`s and the recipes (predefined pipelines) in `graphrag.recipes`
   are deliberate extension points. Keep anything specific to one dataset
   in a `graphrag.domains` pack, never in the core packages.
 - Pipeline steps type their context as a `Protocol` over shared field
@@ -70,7 +70,7 @@ src/
     prompts/         # PromptRepository + prompt text files
     pipeline/        # Pipeline runner + reusable steps (pipeline/steps/), each typed by
                      # a Protocol over the context fields it reads and writes
-    pipelines/       # predefined pipelines, one per chapter (VectorRag, ParentChildRag,
+    recipes/         # predefined pipelines, one per chapter (VectorRag, ParentChildRag,
                      # Text2CypherQA, AgenticRag, StructuredGraphExtraction, GraphRag,
                      # RagEvaluation): index once, query on every later run
     agent/           # Agent, QueryPlanner/QueryUpdater/QueryDecomposer, ToolRouter, AnswerCritic,

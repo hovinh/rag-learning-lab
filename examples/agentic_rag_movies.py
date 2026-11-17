@@ -1,6 +1,6 @@
 """Re-implementation of ch05 (template/kg-rag/notebooks/ch05.ipynb):
-agentic RAG over the movies graph, with the predefined ``AgenticRag``
-pipeline that ``build_movie_agent`` wires with the movie tools. For each
+agentic RAG over the movies graph, with the ``AgenticRag``
+recipe that ``build_movie_agent`` wires with the movie tools. For each
 question the agent rewrites it into an atomic question, lets the LLM
 route it to a tool (two fixed Cypher lookups, text2cypher as fallback, or
 a direct answer), has a critic check the gathered answers for gaps and

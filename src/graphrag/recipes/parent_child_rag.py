@@ -20,8 +20,8 @@ from graphrag.pipeline import (
     SplitSectionsStep,
     StoreParentChildStep,
 )
-from graphrag.pipelines._contexts import AnswerContext
-from graphrag.pipelines.models import RagAnswer
+from graphrag.recipes._contexts import AnswerContext
+from graphrag.recipes.models import RagAnswer
 from graphrag.retrieval.embedder import Embedder
 from graphrag.retrieval.retriever import Retriever
 from graphrag.retrieval.retrievers import ParentChildRetriever, StepBackRetriever
@@ -36,7 +36,7 @@ class _ParentChildIndexContext:
 
 
 class ParentChildRag:
-    """ch03 as a reusable pipeline: split documents into sections (if a
+    """ch03 as a recipe: split documents into sections (if a
     ``section_splitter`` is given), chunk them into parents and children,
     embed only the children, and answer by matching children but handing
     the LLM their parents -- retrieving with a step-back question unless

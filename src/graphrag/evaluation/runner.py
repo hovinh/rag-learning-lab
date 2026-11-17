@@ -13,7 +13,7 @@ from graphrag.observability import Trace
 class AnsweredQuestion(Protocol):
     """What the system under test returns: its answer, and the retrieved
     contexts it was written from -- e.g. ``AgentResponse`` or any
-    ``graphrag.pipelines`` ``RagAnswer``.
+    ``graphrag.recipes`` ``RagAnswer``.
     """
 
     @property
@@ -32,7 +32,7 @@ class BenchmarkRunner:
     """Runs each benchmark question through the system under test (ch08):
     computes the ground truth by running the case's Cypher against
     ``store``, then times ``respond`` (e.g. ``Agent.respond`` or a
-    pipeline's ``query``) answering
+    recipe's ``query``) answering
     the question.
     """
 

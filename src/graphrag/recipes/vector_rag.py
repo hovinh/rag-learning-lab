@@ -15,8 +15,8 @@ from graphrag.pipeline import (
     RetrieveStep,
     StoreChunksStep,
 )
-from graphrag.pipelines._contexts import AnswerContext, ChunkIndexContext
-from graphrag.pipelines.models import RagAnswer
+from graphrag.recipes._contexts import AnswerContext, ChunkIndexContext
+from graphrag.recipes.models import RagAnswer
 from graphrag.retrieval.embedder import Embedder
 from graphrag.retrieval.retriever import Retriever
 from graphrag.retrieval.retrievers import HybridRetriever, VectorRetriever
@@ -25,7 +25,7 @@ SearchMode = Literal["vector", "hybrid"]
 
 
 class VectorRag:
-    """ch02 as a reusable pipeline: chunk and embed documents into a
+    """ch02 as a recipe: chunk and embed documents into a
     ``GraphStore`` once, then answer questions over them with vector or
     hybrid (vector + keyword) search.
 

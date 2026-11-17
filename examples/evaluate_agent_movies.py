@@ -1,5 +1,5 @@
 """Re-implementation of ch08 (template/kg-rag/notebooks/ch08.ipynb) with
-the predefined ``RagEvaluation`` pipeline: evaluating ch05's agentic RAG
+the ``RagEvaluation`` recipe: evaluating ch05's agentic RAG
 over the movies graph against the book's benchmark. Each benchmark
 question's Cypher gives its ground truth; the agent answers it (timed);
 then three RAGAS-style LLM-judged metrics score every answer: answer
@@ -30,7 +30,7 @@ from graphrag.domains.movies import MOVIES_BENCHMARK_PATH, MovieGraphSeeder, bui
 from graphrag.evaluation import load_benchmark, load_samples, log_report, save_samples
 from graphrag.graph import KuzuCypherGraphStore
 from graphrag.observability import RunLogging, Trace
-from graphrag.pipelines import RagEvaluation
+from graphrag.recipes import RagEvaluation
 from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
 

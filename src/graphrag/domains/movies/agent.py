@@ -5,7 +5,7 @@ from graphrag.domains.movies.text2cypher import MOVIES_CYPHER_EXAMPLES, MOVIES_T
 from graphrag.domains.movies.tools import MovieInfoByTitleTool, MoviesInfoByActorTool
 from graphrag.graph import CypherGraphStore, Text2Cypher
 from graphrag.llm import LLMClient, OpenAILLMClient
-from graphrag.pipelines import AgenticRag
+from graphrag.recipes import AgenticRag
 
 # The book's wording, which its prompts hard-code.
 MOVIES_AGENT_SCOPE = AgentScope(

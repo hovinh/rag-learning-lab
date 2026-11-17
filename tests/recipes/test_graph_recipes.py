@@ -9,7 +9,7 @@ from graphrag.extraction.entity_models import ChunkExtraction, ExtractedEntity
 from graphrag.graph.kuzu_cypher_store import KuzuCypherGraphStore
 from graphrag.ingestion.sources import DocumentSource
 from graphrag.llm.client import ToolCall
-from graphrag.pipelines import (
+from graphrag.recipes import (
     AgenticRag,
     CypherAnswer,
     GraphRag,

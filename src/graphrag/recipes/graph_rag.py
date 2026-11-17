@@ -26,7 +26,7 @@ from graphrag.pipeline import (
     ReportCommunitiesStep,
     SummarizeDescriptionsStep,
 )
-from graphrag.pipelines.models import RagAnswer
+from graphrag.recipes.models import RagAnswer
 from graphrag.retrieval.embedder import Embedder
 from graphrag.retrieval.entity_index import EntityEmbeddingIndexer
 from graphrag.retrieval.global_search import GlobalSearch, KeyPoint
@@ -54,7 +54,7 @@ class _LocalContext:
 
 
 class GraphRag:
-    """ch07 (Microsoft-style GraphRAG) as a reusable pipeline. ``index``
+    """ch07 (Microsoft-style GraphRAG) as a recipe. ``index``
     has the LLM extract entities of ``entity_types`` and their
     relationships from every chunk, summarizes them, clusters the entities
     into communities with a report each, and embeds the entities. Then
