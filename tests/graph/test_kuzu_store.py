@@ -79,3 +79,10 @@ def test_replace_chunks_after_reopening_store(tmp_path):
 
     assert results
     assert results[0].text == "dogs are loyal companions"
+
+
+def test_chunk_count_is_zero_until_chunks_are_stored(tmp_path, store):
+    with KuzuGraphStore(tmp_path / "empty_db", embedding_dim=EMBEDDING_DIM) as empty:
+        assert empty.chunk_count() == 0
+
+    assert store.chunk_count() == len(CHUNKS)

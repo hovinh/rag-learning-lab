@@ -1,10 +1,13 @@
-"""Re-implementation of ch02 (template/kg-rag/notebooks/ch02.ipynb):
-download a PDF, chunk + embed it, store it in Kuzu, then answer a question
-with plain vector search and with hybrid (vector + keyword) search.
+"""Re-implementation of ch02 (template/kg-rag/notebooks/ch02.ipynb) with
+the predefined ``VectorRag`` pipeline: download a PDF, chunk + embed it
+into Kuzu, then answer a question with plain vector search and with
+hybrid (vector + keyword) search.
 
-See examples/README.md for how Kuzu's vector (HNSW) and FTS (BM25) indexes
-work under the hood. Requires OPENAI_API_KEY in .env (see .env.example).
-Run from the repo root:
+The index persists in its Kuzu database, so only the first run (or one
+with --reindex) downloads, chunks and embeds; later runs go straight to
+the questions. See examples/README.md for how Kuzu's vector (HNSW) and FTS
+(BM25) indexes work under the hood. Requires OPENAI_API_KEY in .env (see
+.env.example). Run from the repo root:
 
     .venv/Scripts/python.exe examples/vector_similarity_and_hybrid_search.py \\
         --process-name ch02_pdf_qa
@@ -13,25 +16,15 @@ Run from the repo root:
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, field
 from pathlib import Path
 
-from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, PDF_URL
+from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, PDF_URL, add_reindex_argument
 from dotenv import load_dotenv
 
 from graphrag.graph import KuzuGraphStore
-from graphrag.ingestion import Chunk, PdfSource, TextChunker
+from graphrag.ingestion import PdfSource, TextChunker
 from graphrag.observability import RunLogging, Trace
-from graphrag.pipeline import (
-    AnswerStep,
-    ChunkStep,
-    EmbedChunksStep,
-    LoadDocumentsStep,
-    Pipeline,
-    RetrieveStep,
-    StoreChunksStep,
-)
-from graphrag.retrieval import HybridRetriever, ScoredMatch, VectorRetriever
+from graphrag.pipelines import VectorRag
 from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
 
@@ -41,17 +34,7 @@ QUESTION = "At what time was Einstein really interested in experimental works?"
 trace = Trace(__name__)
 
 
-@dataclass
-class Ch02Context:
-    question: str
-    documents: list[str] = field(default_factory=list)
-    chunks: list[Chunk] = field(default_factory=list)
-    embeddings: list[list[float]] = field(default_factory=list)
-    matches: list[ScoredMatch] = field(default_factory=list)
-    answer: str = ""
-
-
-def main(process_name: str, verbose: bool) -> None:
+def main(process_name: str, reindex: bool, verbose: bool) -> None:
     with RunLogging(
         process_name,
         LOG_DIR,
@@ -62,40 +45,32 @@ def main(process_name: str, verbose: bool) -> None:
         load_dotenv()
         settings = Settings.from_env()
         services = OpenAIServices.create(settings, usage=run.usage)
-        embedder, llm = services.embedder, services.llm
+        db_path = settings.db_path_for("ch02")
 
-        context = Ch02Context(question=QUESTION)
+        with KuzuGraphStore(db_path, embedding_dim=services.embedder.dimensions) as store:
+            rag = VectorRag(
+                store,
+                services.embedder,
+                services.llm,
+                chunker=TextChunker(chunk_size=500, overlap=40),
+                k=4,
+                model=DEFAULT_ANSWER_MODEL,
+            )
+            if reindex or not rag.is_indexed():
+                with trace.section("Index the PDF into Kuzu"):
+                    rag.index(PdfSource(PDF_URL, PDF_PATH))
+            else:
+                trace.field("index", f"reusing {db_path} (--reindex rebuilds it)")
 
-        with KuzuGraphStore(
-            settings.db_path_for("ch02"), embedding_dim=embedder.dimensions
-        ) as store:
-            with trace.section("Ingest the PDF into Kuzu"):
-                ingestion: Pipeline[Ch02Context] = Pipeline(
-                    [
-                        LoadDocumentsStep(PdfSource(PDF_URL, PDF_PATH)),
-                        ChunkStep(TextChunker(chunk_size=500, overlap=40)),
-                        EmbedChunksStep(embedder),
-                        StoreChunksStep(store),
-                    ]
-                )
-                ingestion.run(context)
-
-            for label, retriever in [
-                ("vector search", VectorRetriever(store, embedder, k=4)),
-                ("hybrid search", HybridRetriever(store, embedder, k=4)),
-            ]:
-                with trace.section(f"Answer with {label}"):
-                    answering: Pipeline[Ch02Context] = Pipeline(
-                        [
-                            RetrieveStep(retriever, label=label),
-                            AnswerStep(llm, model=DEFAULT_ANSWER_MODEL),
-                        ]
-                    )
-                    answering.run(context)
+            with trace.section("Answer with vector search"):
+                rag.query(QUESTION, search="vector")
+            with trace.section("Answer with hybrid search"):
+                rag.query(QUESTION, search="hybrid")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     RunLogging.add_arguments(parser, default_process_name="ch02_pdf_qa")
+    add_reindex_argument(parser)
     args = parser.parse_args()
-    main(args.process_name, args.verbose)
+    main(args.process_name, args.reindex, args.verbose)

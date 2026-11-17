@@ -1,12 +1,15 @@
-"""Re-implementation of ch06 (template/kg-rag/notebooks/ch06.ipynb):
-extract a typed Contract (parties, their locations and roles, dates,
-term, scope, amount, governing law) from a licensing agreement with
-structured outputs, import it into Kuzu as a small knowledge graph, then
-query the graph back to show what landed.
+"""Re-implementation of ch06 (template/kg-rag/notebooks/ch06.ipynb) with
+the predefined ``StructuredGraphExtraction`` pipeline: extract a typed
+Contract (parties, their locations and roles, dates, term, scope, amount,
+governing law) from a licensing agreement with structured outputs, import
+it into Kuzu as a small knowledge graph, then query the graph back to
+show what landed.
 
-See examples/README.md for the graph model and where it departs from the
-book. Requires OPENAI_API_KEY in .env (see .env.example). Run from the
-repo root:
+The graph persists in its Kuzu database: the contract is extracted only
+if none has been imported yet (or with --reindex, which starts from an
+empty graph). See examples/README.md for the graph model and where it
+departs from the book. Requires OPENAI_API_KEY in .env (see
+.env.example). Run from the repo root:
 
     .venv/Scripts/python.exe examples/structured_extraction_contracts.py \\
         --process-name ch06_structured_extraction_contracts
@@ -15,40 +18,26 @@ repo root:
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, field
 
-from constants import DEFAULT_ANSWER_MODEL, LOG_DIR
+from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, add_reindex_argument
 from dotenv import load_dotenv
 
 from graphrag.domains.contracts import (
     LICENSE_AGREEMENT_PATH,
-    Contract,
     ContractGraphImporter,
     build_contract_extractor,
 )
 from graphrag.graph import KuzuCypherGraphStore
 from graphrag.ingestion import TextFileSource
 from graphrag.observability import RunLogging, Trace
-from graphrag.pipeline import (
-    ExtractStructuredStep,
-    ImportExtractedStep,
-    LoadDocumentsStep,
-    Pipeline,
-)
+from graphrag.pipelines import StructuredGraphExtraction
 from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
 
 trace = Trace(__name__)
 
 
-@dataclass
-class Ch06Context:
-    documents: list[str] = field(default_factory=list)
-    extracted: list[Contract] = field(default_factory=list)
-    imported_ids: list[str] = field(default_factory=list)
-
-
-def main(process_name: str, verbose: bool) -> None:
+def main(process_name: str, reindex: bool, verbose: bool) -> None:
     with RunLogging(
         process_name,
         LOG_DIR,
@@ -59,32 +48,32 @@ def main(process_name: str, verbose: bool) -> None:
         load_dotenv()
         settings = Settings.from_env()
         llm = OpenAIServices.create(settings, usage=run.usage).llm
-        extractor = build_contract_extractor(llm, model=DEFAULT_ANSWER_MODEL)
+        db_path = settings.db_path_for("contracts")
 
-        # Kept apart from the other chapters' databases, and reset on every run
-        # so re-running doesn't pile up copies of the same contract.
-        with KuzuCypherGraphStore(settings.db_path_for("ch06")) as store:
+        with KuzuCypherGraphStore(db_path) as store:
             importer = ContractGraphImporter(store)
-            importer.create_schema(reset=True)
+            importer.create_schema(reset=reindex)
 
-            pipeline: Pipeline[Ch06Context] = Pipeline(
-                [
-                    LoadDocumentsStep(TextFileSource(LICENSE_AGREEMENT_PATH)),
-                    ExtractStructuredStep(extractor),
-                    ImportExtractedStep(importer.import_contract),
-                ]
-            )
-            context = pipeline.run(Ch06Context())
+            if not importer.contract_ids():
+                extraction = StructuredGraphExtraction(
+                    build_contract_extractor(llm, model=DEFAULT_ANSWER_MODEL),
+                    importer.import_contract,
+                )
+                with trace.section("Extract the contract into the graph"):
+                    extraction.index(TextFileSource(LICENSE_AGREEMENT_PATH))
+            else:
+                trace.field("graph", f"reusing {db_path} (--reindex rebuilds it)")
 
             # The book's ch06 notebook stops at the import; reading the
             # parties back shows the nodes and relationships actually landed.
             with trace.section("Query the parties back"):
-                for contract_id in context.imported_ids:
-                    trace.table("parties", importer.parties(contract_id), max_width=60)
+                for contract_id in importer.contract_ids():
+                    trace.table(contract_id, importer.parties(contract_id), max_width=60)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     RunLogging.add_arguments(parser, default_process_name="ch06_structured_extraction_contracts")
+    add_reindex_argument(parser)
     args = parser.parse_args()
-    main(args.process_name, args.verbose)
+    main(args.process_name, args.reindex, args.verbose)

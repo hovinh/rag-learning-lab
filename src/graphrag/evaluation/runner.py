@@ -3,13 +3,27 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable, Sequence
+from typing import Protocol
 
-from graphrag.agent.agent import AgentResponse
 from graphrag.evaluation.models import BenchmarkCase, EvaluationSample
 from graphrag.graph.cypher_store import CypherGraphStore
 from graphrag.observability import Trace
 
-Responder = Callable[[str], AgentResponse]
+
+class AnsweredQuestion(Protocol):
+    """What the system under test returns: its answer, and the retrieved
+    contexts it was written from -- e.g. ``AgentResponse`` or any
+    ``graphrag.pipelines`` ``RagAnswer``.
+    """
+
+    @property
+    def answer(self) -> str: ...
+
+    @property
+    def contexts(self) -> list[str]: ...
+
+
+Responder = Callable[[str], AnsweredQuestion]
 
 _trace = Trace(__name__)
 
@@ -17,7 +31,8 @@ _trace = Trace(__name__)
 class BenchmarkRunner:
     """Runs each benchmark question through the system under test (ch08):
     computes the ground truth by running the case's Cypher against
-    ``store``, then times ``respond`` (e.g. ``Agent.respond``) answering
+    ``store``, then times ``respond`` (e.g. ``Agent.respond`` or a
+    pipeline's ``query``) answering
     the question.
     """
 

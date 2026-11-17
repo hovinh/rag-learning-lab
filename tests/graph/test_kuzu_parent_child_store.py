@@ -79,3 +79,10 @@ def test_replace_parents_after_reopening_store(tmp_path):
 
     assert len(results) == 1
     assert results[0].text == PARENTS[0]
+
+
+def test_parent_count_is_zero_until_parents_are_stored(tmp_path, store):
+    with KuzuParentChildGraphStore(tmp_path / "empty_db", embedding_dim=EMBEDDING_DIM) as empty:
+        assert empty.parent_count() == 0
+
+    assert store.parent_count() == len(PARENTS)

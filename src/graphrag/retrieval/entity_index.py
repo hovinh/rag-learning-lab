@@ -36,6 +36,16 @@ class EntityEmbeddingIndexer:
         self._store = store
         self._embedder = embedder
 
+    def is_indexed(self) -> bool:
+        """Whether ``index`` has built the vector index -- the last step of
+        building ch07's graph, so a graph that has it is complete.
+        """
+        rows = self._store.query(
+            "CALL SHOW_INDEXES() WHERE index_name = $name RETURN index_name",
+            {"name": ENTITY_VECTOR_INDEX},
+        )
+        return bool(rows)
+
     def index(self) -> int:
         """Returns how many entities were embedded."""
         entities = self._store.query(_ENTITY_SUMMARIES)

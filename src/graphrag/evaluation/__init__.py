@@ -8,12 +8,13 @@ from graphrag.evaluation.evaluator import (
 )
 from graphrag.evaluation.metrics import AnswerCorrectness, ContextRecall, Faithfulness, Metric
 from graphrag.evaluation.models import BenchmarkCase, EvaluationSample
-from graphrag.evaluation.runner import BenchmarkRunner, Responder
+from graphrag.evaluation.runner import AnsweredQuestion, BenchmarkRunner, Responder
 from graphrag.evaluation.samples_file import load_samples, save_samples
 from graphrag.evaluation.statements import StatementExtractor
 
 __all__ = [
     "AnswerCorrectness",
+    "AnsweredQuestion",
     "BenchmarkCase",
     "BenchmarkRunner",
     "ContextRecall",

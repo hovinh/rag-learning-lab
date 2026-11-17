@@ -1,11 +1,13 @@
-"""Re-implementation of ch04 (template/kg-rag/notebooks/ch04.ipynb):
-seed a small movies graph into Kuzu, read its schema, have the LLM
-generate a Cypher query for a question (text2cypher, with a terminology
-mapping and a few-shot example), then run that query against the graph.
+"""Re-implementation of ch04 (template/kg-rag/notebooks/ch04.ipynb) with
+the predefined ``Text2CypherQA`` pipeline: seed a small movies graph into
+Kuzu, read its schema, have the LLM generate a Cypher query for a
+question (text2cypher, with a terminology mapping and a few-shot example),
+then run that query against the graph.
 
-See examples/README.md for how the prompt is assembled and how the schema
-is read from Kuzu. Requires OPENAI_API_KEY in .env (see .env.example). Run
-from the repo root:
+The movies graph is shared with ch05 and ch08 and seeded only if it's
+missing (or with --reindex). See examples/README.md for how the prompt is
+assembled and how the schema is read from Kuzu. Requires OPENAI_API_KEY
+in .env (see .env.example). Run from the repo root:
 
     .venv/Scripts/python.exe examples/text2cypher_movies.py \\
         --process-name ch04_text2cypher_movies
@@ -14,10 +16,8 @@ from the repo root:
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, field
-from typing import Any
 
-from constants import DEFAULT_ANSWER_MODEL, LOG_DIR
+from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, add_reindex_argument
 from dotenv import load_dotenv
 
 from graphrag.domains.movies import (
@@ -25,9 +25,9 @@ from graphrag.domains.movies import (
     MOVIES_TERMINOLOGY,
     MovieGraphSeeder,
 )
-from graphrag.graph import KuzuCypherGraphStore, Text2Cypher
+from graphrag.graph import KuzuCypherGraphStore
 from graphrag.observability import RunLogging, Trace
-from graphrag.pipeline import ExecuteCypherStep, GenerateCypherStep, Pipeline
+from graphrag.pipelines import Text2CypherQA
 from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
 
@@ -36,14 +36,7 @@ QUESTION = "Who directed the most movies?"
 trace = Trace(__name__)
 
 
-@dataclass
-class Ch04Context:
-    question: str
-    cypher: str = ""
-    rows: list[dict[str, Any]] = field(default_factory=list)
-
-
-def main(process_name: str, verbose: bool) -> None:
+def main(process_name: str, reindex: bool, verbose: bool) -> None:
     with RunLogging(
         process_name,
         LOG_DIR,
@@ -55,30 +48,27 @@ def main(process_name: str, verbose: bool) -> None:
         settings = Settings.from_env()
         llm = OpenAIServices.create(settings, usage=run.usage).llm
 
-        # Kept apart from the other chapters' databases: seeding drops and
-        # recreates its tables on every run.
-        with KuzuCypherGraphStore(settings.db_path_for("ch04")) as store:
-            with trace.section("Seed the movies graph"):
-                MovieGraphSeeder(store).seed()
-                schema = store.get_schema()
-                # The schema is what text2cypher's prompt shows the LLM.
-                trace.block("schema", schema.to_prompt())
+        with KuzuCypherGraphStore(settings.db_path_for("movies")) as store:
+            seeder = MovieGraphSeeder(store)
+            if reindex or not seeder.is_seeded():
+                with trace.section("Seed the movies graph"):
+                    seeder.seed()
 
-            text2cypher = Text2Cypher(
+            qa = Text2CypherQA(
+                store,
                 llm,
-                schema,
                 terminology=MOVIES_TERMINOLOGY,
                 examples=MOVIES_CYPHER_EXAMPLES,
                 model=DEFAULT_ANSWER_MODEL,
             )
-            pipeline: Pipeline[Ch04Context] = Pipeline(
-                [GenerateCypherStep(text2cypher), ExecuteCypherStep(store)]
-            )
-            pipeline.run(Ch04Context(question=QUESTION))
+            # The schema is what text2cypher's prompt shows the LLM.
+            trace.block("schema", qa.schema.to_prompt())
+            qa.query(QUESTION)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     RunLogging.add_arguments(parser, default_process_name="ch04_text2cypher_movies")
+    add_reindex_argument(parser)
     args = parser.parse_args()
-    main(args.process_name, args.verbose)
+    main(args.process_name, args.reindex, args.verbose)

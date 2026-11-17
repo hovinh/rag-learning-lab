@@ -17,6 +17,12 @@ class GraphStore(ABC):
         """Replace the entire chunk corpus with the given chunks/embeddings."""
 
     @abstractmethod
+    def chunk_count(self) -> int:
+        """How many chunks are stored -- 0 until ``replace_chunks`` runs,
+        so callers can index once and query on later runs.
+        """
+
+    @abstractmethod
     def vector_search(self, query_embedding: list[float], k: int) -> list[ChunkMatch]: ...
 
     @abstractmethod

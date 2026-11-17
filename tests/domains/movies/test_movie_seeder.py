@@ -50,3 +50,13 @@ def test_seed_builds_schema_from_declared_tables(store):
 
     assert set(schema.node_props) == set(MovieGraphSeeder.NODE_TABLES)
     assert {r.type for r in schema.relationships} == set(MovieGraphSeeder.REL_TABLES)
+
+
+def test_is_seeded_only_once_every_table_exists(tmp_path):
+    with KuzuCypherGraphStore(tmp_path / "movies_db") as store:
+        seeder = MovieGraphSeeder(store)
+        assert not seeder.is_seeded()
+
+        seeder.seed()
+
+        assert seeder.is_seeded()

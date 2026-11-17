@@ -25,5 +25,11 @@ class ParentChildGraphStore(ABC):
         """Replace the entire parent/child corpus."""
 
     @abstractmethod
+    def parent_count(self) -> int:
+        """How many parents are stored -- 0 until ``replace_parents``
+        runs, so callers can index once and query on later runs.
+        """
+
+    @abstractmethod
     def parent_retrieval(self, query_embedding: list[float], k: int) -> list[ParentMatch]:
         """Vector-search over children, aggregated up to their parent."""

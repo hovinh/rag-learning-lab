@@ -11,8 +11,8 @@ TEST_EMBEDDING_DIM = 3
 
 class ScriptedLLMClient(LLMClient):
     """Returns queued responses in order -- ``completions`` for
-    ``complete``, ``tool_calls`` for ``choose_tools`` -- and records every
-    call.
+    ``complete``, ``tool_calls`` for ``choose_tools``, ``streamed`` for
+    ``stream`` -- and records every call.
     """
 
     def __init__(self) -> None:
@@ -20,13 +20,16 @@ class ScriptedLLMClient(LLMClient):
         self.tool_calls: list[list] = []
         self.complete_calls: list[dict] = []
         self.choose_tools_calls: list[dict] = []
+        self.streamed: list[str] = []
+        self.stream_calls: list[dict] = []
 
     def complete(self, messages, *, model, temperature=0.0, json_mode=False):
         self.complete_calls.append({"messages": messages, "model": model, "json_mode": json_mode})
         return self.completions.pop(0)
 
     def stream(self, messages, *, model, temperature=0.0):
-        raise NotImplementedError
+        self.stream_calls.append({"messages": messages, "model": model})
+        yield self.streamed.pop(0)
 
     def choose_tools(self, messages, tools, *, model, temperature=0.0):
         self.choose_tools_calls.append({"messages": messages, "tools": tools, "model": model})

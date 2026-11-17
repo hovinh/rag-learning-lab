@@ -641,7 +641,7 @@ SLIDES: tuple[SlideSpec, ...] = (
     TableSlide(
         title="From the book to this repo",
         subtitle="One example script per chapter, built from library classes",
-        header=("Ch.", "Topic", "Example script (examples/)", "Main classes"),
+        header=("Ch.", "Topic", "Example script (examples/)", "Pipeline: main classes"),
         widths=(0.85, 2.5, 4.15, 4.8),
         font_size=12,
         rows=(
@@ -649,43 +649,43 @@ SLIDES: tuple[SlideSpec, ...] = (
                 "ch02",
                 "PDF ingestion, vector and hybrid search",
                 "`vector_similarity_and_hybrid_search.py`",
-                "PdfLoader, TextChunker, OpenAIEmbedder, KuzuGraphStore",
+                "VectorRag: PdfSource, TextChunker, OpenAIEmbedder, KuzuGraphStore",
             ),
             (
                 "ch03",
                 "Step-back prompting, parent-child retrieval",
                 "`parent_child_stepback_rag.py`",
-                "SectionSplitter, TokenCounter, QueryRewriter, KuzuParentChildGraphStore",
+                "ParentChildRag: SectionSplitter, StepBackRetriever, KuzuParentChildGraphStore",
             ),
             (
                 "ch04",
                 "text2cypher",
                 "`text2cypher_movies.py`",
-                "Text2Cypher, KuzuCypherGraphStore, MovieGraphSeeder",
+                "Text2CypherQA: Text2Cypher, KuzuCypherGraphStore, MovieGraphSeeder",
             ),
             (
                 "ch05",
                 "Agentic RAG",
                 "`agentic_rag_movies.py`",
-                "Agent, QueryUpdater, ToolRouter, AnswerCritic, Tool subclasses",
+                "AgenticRag: Agent, QueryUpdater, ToolRouter, AnswerCritic, Tool subclasses",
             ),
             (
                 "ch06",
                 "Structured extraction into a knowledge graph",
                 "`structured_extraction_contracts.py`",
-                "Contract (Pydantic), StructuredExtractor, ContractGraphImporter",
+                "StructuredGraphExtraction: Contract (Pydantic), ContractGraphImporter",
             ),
             (
                 "ch07",
                 "Microsoft-style GraphRAG",
                 "`graphrag_odyssey.py`",
-                "EntityRelationshipExtractor, CommunityReporter, GlobalSearch, LocalSearch",
+                "GraphRag: EntityRelationshipExtractor, CommunityReporter, GlobalSearch, LocalSearch",
             ),
             (
                 "ch08",
                 "Evaluating the RAG system",
                 "`evaluate_agent_movies.py`",
-                "BenchmarkRunner, Evaluator, AnswerCorrectness, ContextRecall, Faithfulness",
+                "RagEvaluation: BenchmarkRunner, Evaluator, AnswerCorrectness, ContextRecall, Faithfulness",
             ),
             (
                 "shared",
@@ -710,8 +710,8 @@ SLIDES: tuple[SlideSpec, ...] = (
                 "Configuration",
                 "`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`",
                 (
-                    "A directory: `KUZU_DB_PATH=data/kuzu_db`. Each example uses its own, e.g. "
-                    "`data/kuzu_db_ch04`"
+                    "A directory: `KUZU_DB_PATH=data/kuzu_db`. `db_path_for(name)` gives each "
+                    "graph its own, e.g. `data/kuzu_db_movies`, kept between runs"
                 ),
             ),
             (
@@ -832,10 +832,12 @@ rag-learning-lab/
 │   ├── extraction/      structured + entity extraction, communities
 │   ├── agent/           agent, query planners, tool router, critic, tools
 │   ├── evaluation/      benchmark runner, evaluator, RAGAS-style metrics
-│   ├── pipeline/        Pipeline + shared steps
+│   ├── pipeline/        Pipeline runner + reusable steps
+│   ├── pipelines/       predefined pipelines, one per chapter
 │   ├── observability/   Trace, RunLogging, UsageMeter: the run logs
 │   ├── domains/         domain packs: movies, contracts, odyssey
-│   └── settings.py      Settings.from_env()
+│   ├── services.py      OpenAIServices: LLM client + embedder
+│   └── settings.py      Settings.from_env(), db_path_for(name)
 ├── examples/            one runnable script per chapter + README.md
 ├── tests/               pytest, mirrors src/graphrag/ package by package
 ├── docs/                python.md (conventions), repo-feature/ (this deck)
@@ -857,11 +859,12 @@ rag-learning-lab/
                 ),
             ),
             Layer(
-                "Domain packs",
+                "Domains, pipelines",
                 (
-                    "domains.movies\nseeder, tools, agent scope, benchmark",
-                    "domains.contracts\nContract model, importer, prompt",
+                    "domains.movies\nseeder, tools, scope, benchmark",
+                    "domains.contracts\nmodel, importer, prompt",
                     "domains.odyssey\ncorpus, entity types",
+                    "pipelines\nVectorRag, GraphRag, AgenticRag, …",
                 ),
             ),
             Layer(
@@ -1004,7 +1007,8 @@ rag-learning-lab/
             (
                 "graphrag.evaluation",
                 (
-                    "BenchmarkCase, load_benchmark, BenchmarkRunner, Responder, EvaluationSample, "
+                    "BenchmarkCase, load_benchmark, BenchmarkRunner, Responder, AnsweredQuestion, "
+                    "EvaluationSample, "
                     "Evaluator, EvaluationReport, ScoredSample, Metric, AnswerCorrectness, "
                     "ContextRecall, Faithfulness, StatementExtractor, save_samples, load_samples, "
                     "format_score, log_report"
@@ -1023,6 +1027,15 @@ rag-learning-lab/
                 "graphrag.pipeline",
                 "Pipeline, PipelineStep, and every step on the next slide",
                 "Runs steps over a context object",
+            ),
+            (
+                "graphrag.pipelines",
+                (
+                    "VectorRag, SearchMode, ParentChildRag, Text2CypherQA, "
+                    "StructuredGraphExtraction, GraphRag, AgenticRag, RagEvaluation, RagAnswer, "
+                    "CypherAnswer"
+                ),
+                "Predefined pipelines: index once, query on every later run",
             ),
             (
                 "graphrag.domains",
@@ -1124,6 +1137,63 @@ rag-learning-lab/
         ),
     ),
     TableSlide(
+        title="Predefined pipelines",
+        subtitle=(
+            "`graphrag.pipelines`: each chapter's flow as one reusable, domain-agnostic class"
+        ),
+        header=("Pipeline", "Built from", "Index (once)", "Query"),
+        widths=(2.6, 3.4, 3.3, 3.0),
+        font_size=11.5,
+        rows=(
+            (
+                "VectorRag (ch02)",
+                "GraphStore, Embedder, TextChunker",
+                "`index(source)`: chunk, embed, store",
+                "`query(q, search=` vector or hybrid`)`",
+            ),
+            (
+                "ParentChildRag (ch03)",
+                "ParentChildGraphStore, SectionSplitter",
+                "`index(source)`: sections, parents, children",
+                "`query(q)`, step-back by default",
+            ),
+            (
+                "Text2CypherQA (ch04)",
+                "CypherGraphStore, terminology, examples",
+                "the domain seeds the graph",
+                "`query(q)` → CypherAnswer",
+            ),
+            (
+                "AgenticRag (ch05)",
+                "any Tool list, AgentScope",
+                "the tools' own data",
+                "`query(q)` → RagAnswer",
+            ),
+            (
+                "StructuredGraphExtraction (ch06)",
+                "StructuredExtractor, an import function",
+                "`index(source)` → imported ids",
+                "the domain's queries",
+            ),
+            (
+                "GraphRag (ch07)",
+                "CypherGraphStore, entity types",
+                "`index(source, limit=)`: entity graph, communities",
+                "`global_search(q)`, `local_search(q)`",
+            ),
+            (
+                "RagEvaluation (ch08)",
+                "Metric list (the book's three by default)",
+                "—",
+                "`answer(store, cases, respond)`, `score(samples)`",
+            ),
+        ),
+        caption=(
+            "Indexes persist in their Kuzu database: `is_indexed()` says whether to index. Every "
+            "`query` returns a RagAnswer (answer + contexts), so any pipeline can be benchmarked."
+        ),
+    ),
+    TableSlide(
         title="Core interfaces",
         subtitle="Callers depend on these abstract base classes, never on a concrete client",
         header=("Interface", "Contract", "Implementations", "In tests"),
@@ -1187,7 +1257,7 @@ rag-learning-lab/
     ),
     CodeSlide(
         title="How a script is wired",
-        subtitle="Composition root + Pipeline, from `examples/vector_similarity_and_hybrid_search.py`",
+        subtitle="Composition root + a predefined pipeline, from `examples/vector_similarity_and_hybrid_search.py`",
         bullets=(
             (
                 "`Settings.from_env()` reads `.env` once: `OPENAI_API_KEY` (required) and "
@@ -1198,18 +1268,18 @@ rag-learning-lab/
                 "injects them into constructors"
             ),
             (
-                "A Pipeline runs a list of steps over one mutable context dataclass. A step is any "
-                "callable `step(context)`"
+                "`OpenAIServices.create(settings, usage=run.usage)` makes the LLM client and "
+                "embedder, so `RunLogging` counts every call"
             ),
             (
-                "Steps come from `graphrag.pipeline`; retrieval is a Retriever passed to "
-                "RetrieveStep, so swapping vector for hybrid search is one argument"
+                "`--reindex` (or an empty database, `is_indexed()` false) makes the pipeline "
+                "index; otherwise the index kept in Kuzu is reused"
+            ),
+            (
+                "Inside, `VectorRag` is a Pipeline of steps from `graphrag.pipeline`; each step "
+                "still logs as its own section"
             ),
             "Stores are context managers, so the database connection is always closed",
-            (
-                "`RunLogging` wraps the whole run; `OpenAIServices.create(settings, "
-                "usage=run.usage)` makes the LLM client and embedder, so the log counts every call"
-            ),
         ),
         code="""
 with RunLogging(process_name, LOG_DIR,
@@ -1218,21 +1288,18 @@ with RunLogging(process_name, LOG_DIR,
     settings = Settings.from_env()
     services = OpenAIServices.create(settings,
                                      usage=run.usage)
-    embedder, llm = services.embedder, services.llm
+    db_path = settings.db_path_for("ch02")
 
-    context = Ch02Context(question=QUESTION)
-    with KuzuGraphStore(settings.db_path_for("ch02"),
-                        embedding_dim=embedder.dimensions) as store:
-        Pipeline([
-            LoadDocumentsStep(PdfSource(PDF_URL, PDF_PATH)),
-            ChunkStep(TextChunker(chunk_size=500, overlap=40)),
-            EmbedChunksStep(embedder),
-            StoreChunksStep(store),
-        ]).run(context)
-        Pipeline([
-            RetrieveStep(HybridRetriever(store, embedder, k=4)),
-            AnswerStep(llm, model="gpt-4o"),
-        ]).run(context)
+    with KuzuGraphStore(db_path, embedding_dim=
+                        services.embedder.dimensions) as store:
+        rag = VectorRag(store, services.embedder,
+                        services.llm,
+                        chunker=TextChunker(500, 40))
+        if reindex or not rag.is_indexed():
+            rag.index(PdfSource(PDF_URL, PDF_PATH))
+
+        rag.query(QUESTION, search="vector")
+        rag.query(QUESTION, search="hybrid")
 """,
     ),
     CodeSlide(

@@ -83,6 +83,11 @@ class KuzuGraphStore(GraphStore):
         )
         self._conn.execute(f"CALL CREATE_FTS_INDEX('Chunk', '{self._FTS_INDEX}', ['text'])")
 
+    def chunk_count(self) -> int:
+        result = self._conn.execute("MATCH (c:Chunk) RETURN count(*)")
+        [row] = list(self._rows(result))
+        return int(row[0])
+
     def vector_search(self, query_embedding: list[float], k: int) -> list[ChunkMatch]:
         result = self._conn.execute(
             f"CALL QUERY_VECTOR_INDEX('Chunk', '{self._VECTOR_INDEX}', $embedding, $k) "

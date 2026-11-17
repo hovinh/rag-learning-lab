@@ -109,6 +109,11 @@ class KuzuParentChildGraphStore(ParentChildGraphStore):
             "'embedding', metric := 'cosine')"
         )
 
+    def parent_count(self) -> int:
+        result = self._conn.execute("MATCH (p:Parent) RETURN count(*)")
+        [row] = list(self._rows(result))
+        return int(row[0])
+
     def parent_retrieval(self, query_embedding: list[float], k: int) -> list[ParentMatch]:
         result = self._conn.execute(
             f"CALL QUERY_VECTOR_INDEX('Child', '{self._VECTOR_INDEX}', $embedding, $k4) "

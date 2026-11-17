@@ -54,9 +54,33 @@ console too. A run reads as an indented tree:
   and its footer says `✗ failed`.
 
 To get the same output from your own script, wrap it in
-`RunLogging(process_name, log_dir)`, pass `usage=run.usage` to
-`OpenAILLMClient`/`OpenAIEmbedder` so the footer can count calls and
-tokens, and log through a module-level `Trace(__name__)`.
+`RunLogging(process_name, log_dir)`, build the clients with
+`OpenAIServices.create(settings, usage=run.usage)` so the footer can count
+calls and tokens, and log through a module-level `Trace(__name__)`.
+
+## Predefined pipelines and persistent indexes
+
+Each script is a thin composition root around one predefined pipeline from
+[`graphrag.pipelines`](../src/graphrag/pipelines): `VectorRag` (ch02),
+`ParentChildRag` (ch03), `Text2CypherQA` (ch04), `AgenticRag` (ch05),
+`StructuredGraphExtraction` (ch06), `GraphRag` (ch07) and `RagEvaluation`
+(ch08). The pipelines are assembled from the reusable steps in
+[`graphrag.pipeline`](../src/graphrag/pipeline/steps) and know nothing
+about movies, contracts or the Odyssey. That domain knowledge lives in the
+[`graphrag.domains`](../src/graphrag/domains) packs, so a new RAG system
+reuses a pipeline with its own documents, store, prompt sections and tools.
+
+Indexing and querying are separate. An index persists in the pipeline's
+Kuzu database (`Settings.db_path_for(name)`: `data/kuzu_db_ch02`,
+`_ch03`, `_movies`, `_contracts`, `_odyssey`), so a script builds it only
+when it's missing (`is_indexed()`) and later runs go straight to the
+questions. `--reindex` rebuilds it, which matters most for ch07, whose
+graph costs 100–150 LLM calls per book. ch04, ch05 and ch08 share the
+`_movies` database.
+
+Every `query` returns a `RagAnswer` (the answer plus the contexts it was
+written from), which is exactly what `BenchmarkRunner` scores, so any
+pipeline can be evaluated the way ch08 evaluates the agent.
 
 ## Chapter 2 — PDF ingestion, vector search, and hybrid search
 
@@ -240,6 +264,8 @@ the benchmark's "more than 5000 votes" question has something to filter.
 drops and recreates the tables and then bulk-loads one CSV per table with
 `COPY ... FROM`. Unlike Neo4j, Kuzu needs every node and relationship table
 declared (`CREATE NODE TABLE` / `CREATE REL TABLE`) before data goes in.
+The scripts seed only when `MovieGraphSeeder.is_seeded()` is false (or
+with `--reindex`), so ch04, ch05 and ch08 share one `_movies` database.
 
 ### How the schema is read from Kuzu
 
@@ -321,8 +347,8 @@ Run from the repo root (requires `OPENAI_API_KEY` in `.env`, see
 Ch04 always answers in one way: generate Cypher, then run it. Ch05 puts an
 **agent** in front of that. The LLM decides how to answer each question,
 and checks whether the answer is complete before replying. The script
-seeds the same movies graph as ch04 (its own `_ch05` Kuzu database) and
-asks the book's two questions.
+uses the same movies graph as ch04 (the shared `_movies` Kuzu database,
+seeded if missing) and asks the book's two questions.
 
 ### The flow
 
@@ -478,9 +504,11 @@ Pipeline: load the contract
 a 1999 licensing and web site hosting agreement from an SEC filing) →
 extract a `Contract`
 ([`StructuredExtractor`](../src/graphrag/extraction/extractor.py)) →
-import it into its own `_ch06` Kuzu database
+import it into its own `_contracts` Kuzu database
 ([`ContractGraphImporter`](../src/graphrag/domains/contracts/importer.py))
-→ query the parties back. The database is reset on every run.
+→ query the parties back. The contract is extracted only while the graph
+holds none, so re-running doesn't pile up copies; `--reindex` starts
+from an empty graph.
 
 ### Structured outputs
 
@@ -579,8 +607,9 @@ Project Gutenberg
 6,400 tokens (4,406–10,648; the script logs this with `TokenCounter`, as
 the book does). As in the book, only
 the first is processed by default; `--books N` processes more, at roughly
-100–150 LLM calls per book. The script uses its own `_ch07` Kuzu database,
-reset on every run.
+100–150 LLM calls per book. The script keeps the graph in its own
+`_odyssey` Kuzu database and only searches it on later runs; `--reindex`
+rebuilds it from scratch (needed after changing `--books`).
 
 ### Indexing: building the graph
 
@@ -754,9 +783,10 @@ Run from the repo root (requires `OPENAI_API_KEY` in `.env`, see
 Ch08 doesn't build anything new to retrieve with. It measures how well
 ch05's agent answers questions about the movies graph, so that a change
 to a prompt, a tool or the model can be judged by numbers rather than by
-reading a few answers. The script seeds the movies graph into its own
-`_ch08` Kuzu database, builds the same agent as ch05 (both scripts call
-`build_movie_agent()` from `graphrag.domains.movies`), runs the benchmark, and logs a score
+reading a few answers. The script uses the shared `_movies` Kuzu database
+(seeded if missing), builds the same agent as ch05 (both scripts call
+`build_movie_agent()` from `graphrag.domains.movies`), runs the benchmark
+through `RagEvaluation`, and logs a score
 per question plus each metric's mean. The per-question table (the book's
 final `test_data` frame) is also written to
 `logs/<process_name>_results.csv`. Each question takes roughly 5 agent

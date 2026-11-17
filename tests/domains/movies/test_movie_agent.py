@@ -31,9 +31,9 @@ def test_build_movie_agent_routes_to_the_movie_tools(llm, tmp_path):
     with KuzuCypherGraphStore(tmp_path / "movies_db") as store:
         MovieGraphSeeder(store).seed()
 
-        agent = build_movie_agent(llm, store, model="test-model")
+        rag = build_movie_agent(llm, store, model="test-model")
 
-        tool_names = [tool.name for tool in agent._router._tools.values()]
+        tool_names = [tool.name for tool in rag.agent._router._tools.values()]
         assert tool_names == [
             "movie_info_by_title",
             "movies_info_by_actor",

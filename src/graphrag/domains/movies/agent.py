@@ -1,21 +1,11 @@
 from __future__ import annotations
 
-from graphrag.agent import (
-    Agent,
-    AgentScope,
-    AnswerCritic,
-    AnswerGivenTool,
-    QueryDecomposer,
-    QueryPlanner,
-    QueryUpdater,
-    Text2CypherTool,
-    Tool,
-    ToolRouter,
-)
+from graphrag.agent import AgentScope, AnswerGivenTool, Text2CypherTool, Tool
 from graphrag.domains.movies.text2cypher import MOVIES_CYPHER_EXAMPLES, MOVIES_TERMINOLOGY
 from graphrag.domains.movies.tools import MovieInfoByTitleTool, MoviesInfoByActorTool
 from graphrag.graph import CypherGraphStore, Text2Cypher
 from graphrag.llm import LLMClient, OpenAILLMClient
+from graphrag.pipelines import AgenticRag
 
 # The book's wording, which its prompts hard-code.
 MOVIES_AGENT_SCOPE = AgentScope(
@@ -53,26 +43,17 @@ def build_movie_agent(
     *,
     decompose: bool = False,
     model: str = OpenAILLMClient.DEFAULT_MODEL,
-) -> Agent:
+) -> AgenticRag:
     """The ch05 agent over the movies graph in ``store``.
 
     ``decompose`` splits each question into atomic questions first, as
     ch08's ``get_answer`` does, instead of ch05's one rewritten question.
     """
-    query_planner: QueryPlanner = (
-        QueryDecomposer(llm, scope=MOVIES_AGENT_SCOPE, model=model)
-        if decompose
-        else QueryUpdater(llm, scope=MOVIES_AGENT_SCOPE, model=model)
-    )
-    return Agent(
+    return AgenticRag(
         llm,
-        query_planner,
-        ToolRouter(llm, movie_tools(llm, store, model=model), model=model),
-        AnswerCritic(
-            llm,
-            data_description=store.get_schema().to_prompt(),
-            scope=MOVIES_AGENT_SCOPE,
-            model=model,
-        ),
+        movie_tools(llm, store, model=model),
+        scope=MOVIES_AGENT_SCOPE,
+        data_description=store.get_schema().to_prompt(),
+        decompose=decompose,
         model=model,
     )

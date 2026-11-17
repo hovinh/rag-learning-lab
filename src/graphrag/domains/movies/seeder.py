@@ -34,6 +34,15 @@ class MovieGraphSeeder:
         self._store = store
         self._data_dir = data_dir
 
+    def is_seeded(self) -> bool:
+        """Whether every movies table exists, so a script can seed once and
+        reuse the graph on later runs.
+        """
+        schema = self._store.get_schema()
+        return set(self.NODE_TABLES) <= set(schema.node_props) and set(self.REL_TABLES) <= {
+            relationship.type for relationship in schema.relationships
+        }
+
     def seed(self) -> None:
         """Drop and recreate every table, then load the CSVs -- safe to
         re-run against an already-seeded database.
