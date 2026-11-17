@@ -27,6 +27,7 @@ from graphrag.pipeline.steps.ingestion import (
     ParentChildChunkStep,
     SplitSectionsStep,
 )
+from graphrag.pipeline.steps.retrieval import RetrieveStep
 
 __all__ = [
     "AnswerStep",
@@ -45,6 +46,7 @@ __all__ = [
     "LocalSearchStep",
     "ParentChildChunkStep",
     "ReportCommunitiesStep",
+    "RetrieveStep",
     "SplitSectionsStep",
     "StoreChunksStep",
     "StoreParentChildStep",

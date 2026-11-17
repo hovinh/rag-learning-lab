@@ -123,3 +123,18 @@ def test_text2cypher_tool_corrects_a_query_kuzu_rejects(tmp_path):
     [(asked, rejected, error)] = t2c.corrections
     assert (asked, rejected) == (question, t2c.cypher)
     assert "length" in error.lower()
+
+
+def test_retriever_tool_returns_each_match_text_and_score():
+    from graphrag.agent.retriever_tool import RetrieverTool
+    from graphrag.graph.models import ChunkMatch
+
+    class FixedRetriever:
+        def retrieve(self, question):
+            return [ChunkMatch(0, f"about {question}", 0.5)]
+
+    tool = RetrieverTool(FixedRetriever(), name="search_papers", description="Search papers")
+
+    assert tool.definition()["function"]["name"] == "search_papers"
+    assert tool.definition()["function"]["description"] == "Search papers"
+    assert tool.run({"question": "Bern"}) == [{"text": "about Bern", "score": 0.5}]

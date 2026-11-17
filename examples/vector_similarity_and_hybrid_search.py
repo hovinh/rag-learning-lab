@@ -19,7 +19,7 @@ from pathlib import Path
 from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, PDF_URL
 from dotenv import load_dotenv
 
-from graphrag.graph import ChunkMatch, GraphStore, KuzuGraphStore
+from graphrag.graph import KuzuGraphStore
 from graphrag.ingestion import Chunk, PdfSource, TextChunker
 from graphrag.observability import RunLogging, Trace
 from graphrag.pipeline import (
@@ -28,8 +28,10 @@ from graphrag.pipeline import (
     EmbedChunksStep,
     LoadDocumentsStep,
     Pipeline,
+    RetrieveStep,
     StoreChunksStep,
 )
+from graphrag.retrieval import HybridRetriever, ScoredMatch, VectorRetriever
 from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
 
@@ -45,35 +47,8 @@ class Ch02Context:
     documents: list[str] = field(default_factory=list)
     chunks: list[Chunk] = field(default_factory=list)
     embeddings: list[list[float]] = field(default_factory=list)
-    matches: list[ChunkMatch] = field(default_factory=list)
+    matches: list[ScoredMatch] = field(default_factory=list)
     answer: str = ""
-
-
-class VectorSearchStep:
-    def __init__(self, store: GraphStore, question_embedding: list[float], k: int) -> None:
-        self._store = store
-        self._question_embedding = question_embedding
-        self._k = k
-
-    def __call__(self, context: Ch02Context) -> None:
-        context.matches = self._store.vector_search(self._question_embedding, k=self._k)
-
-
-class HybridSearchStep:
-    title = "Hybrid search (vector + keyword)"
-
-    def __init__(
-        self, store: GraphStore, question: str, question_embedding: list[float], k: int
-    ) -> None:
-        self._store = store
-        self._question = question
-        self._question_embedding = question_embedding
-        self._k = k
-
-    def __call__(self, context: Ch02Context) -> None:
-        context.matches = self._store.hybrid_search(
-            self._question, self._question_embedding, k=self._k
-        )
 
 
 def main(process_name: str, verbose: bool) -> None:
@@ -105,25 +80,18 @@ def main(process_name: str, verbose: bool) -> None:
                 )
                 ingestion.run(context)
 
-            question_embedding = embedder.embed([context.question])[0]
-
-            with trace.section("Answer with vector search"):
-                vector_pipeline: Pipeline[Ch02Context] = Pipeline(
-                    [
-                        VectorSearchStep(store, question_embedding, k=4),
-                        AnswerStep(llm, model=DEFAULT_ANSWER_MODEL),
-                    ]
-                )
-                vector_pipeline.run(context)
-
-            with trace.section("Answer with hybrid search"):
-                hybrid_pipeline: Pipeline[Ch02Context] = Pipeline(
-                    [
-                        HybridSearchStep(store, context.question, question_embedding, k=4),
-                        AnswerStep(llm, model=DEFAULT_ANSWER_MODEL),
-                    ]
-                )
-                hybrid_pipeline.run(context)
+            for label, retriever in [
+                ("vector search", VectorRetriever(store, embedder, k=4)),
+                ("hybrid search", HybridRetriever(store, embedder, k=4)),
+            ]:
+                with trace.section(f"Answer with {label}"):
+                    answering: Pipeline[Ch02Context] = Pipeline(
+                        [
+                            RetrieveStep(retriever, label=label),
+                            AnswerStep(llm, model=DEFAULT_ANSWER_MODEL),
+                        ]
+                    )
+                    answering.run(context)
 
 
 if __name__ == "__main__":

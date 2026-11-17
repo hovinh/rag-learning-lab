@@ -21,7 +21,7 @@ from pathlib import Path
 from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, PDF_URL
 from dotenv import load_dotenv
 
-from graphrag.graph import KuzuParentChildGraphStore, ParentChildGraphStore, ParentMatch
+from graphrag.graph import KuzuParentChildGraphStore
 from graphrag.ingestion import PdfSource, SectionSplitter, TextChunker
 from graphrag.llm import QueryRewriter, TokenCounter
 from graphrag.observability import RunLogging, Trace
@@ -31,10 +31,11 @@ from graphrag.pipeline import (
     LoadDocumentsStep,
     ParentChildChunkStep,
     Pipeline,
+    RetrieveStep,
     SplitSectionsStep,
     StoreParentChildStep,
 )
-from graphrag.retrieval import Embedder
+from graphrag.retrieval import ParentChildRetriever, ScoredMatch, StepBackRetriever
 from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
 
@@ -53,33 +54,8 @@ class Ch03Context:
     parents: list[str] = field(default_factory=list)
     children_per_parent: list[list[str]] = field(default_factory=list)
     child_embeddings_per_parent: list[list[list[float]]] = field(default_factory=list)
-    step_back_question: str = ""
-    matches: list[ParentMatch] = field(default_factory=list)
+    matches: list[ScoredMatch] = field(default_factory=list)
     answer: str = ""
-
-
-class StepBackRewriteStep:
-    title = "Step-back rewrite"
-
-    def __init__(self, query_rewriter: QueryRewriter) -> None:
-        self._query_rewriter = query_rewriter
-
-    def __call__(self, context: Ch03Context) -> None:
-        context.step_back_question = self._query_rewriter.step_back(context.question)
-        trace.fields({"question": context.question, "step-back": context.step_back_question})
-
-
-class ParentRetrievalStep:
-    title = "Parent retrieval (match children, return parents)"
-
-    def __init__(self, store: ParentChildGraphStore, embedder: Embedder, k: int) -> None:
-        self._store = store
-        self._embedder = embedder
-        self._k = k
-
-    def __call__(self, context: Ch03Context) -> None:
-        step_back_embedding = self._embedder.embed([context.step_back_question])[0]
-        context.matches = self._store.parent_retrieval(step_back_embedding, k=self._k)
 
 
 def main(process_name: str, verbose: bool) -> None:
@@ -118,8 +94,12 @@ def main(process_name: str, verbose: bool) -> None:
             with trace.section("Answer with step-back + parent retrieval"):
                 retrieval: Pipeline[Ch03Context] = Pipeline(
                     [
-                        StepBackRewriteStep(QueryRewriter(llm)),
-                        ParentRetrievalStep(store, embedder, k=4),
+                        RetrieveStep(
+                            StepBackRetriever(
+                                QueryRewriter(llm), ParentChildRetriever(store, embedder, k=4)
+                            ),
+                            label="step-back + parent retrieval",
+                        ),
                         AnswerStep(llm, model=DEFAULT_ANSWER_MODEL),
                     ]
                 )

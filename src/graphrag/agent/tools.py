@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from typing import Any, ClassVar
+from typing import Any
 
 from graphrag.graph.cypher_store import CypherGraphStore
 from graphrag.graph.errors import GraphQueryError
@@ -37,9 +37,11 @@ class Tool(ABC):
     a single ``name`` rules that out.
     """
 
-    name: ClassVar[str]
-    description: ClassVar[str]
-    parameters: ClassVar[dict[str, Any]]
+    # Usually set on the subclass; a tool configured per instance (e.g.
+    # RetrieverTool) sets them in its constructor instead.
+    name: str
+    description: str
+    parameters: dict[str, Any]
 
     def definition(self) -> ToolDefinition:
         return {

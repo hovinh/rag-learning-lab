@@ -7,26 +7,12 @@ from typing import Protocol
 from graphrag.llm.client import LLMClient, OpenAILLMClient
 from graphrag.observability import Trace, preview
 from graphrag.prompts import PromptRepository
+from graphrag.retrieval.retriever import ScoredMatch
 
 _ANSWER_SYSTEM_PROMPT = "answer_system.txt"
 _ANSWER_USER_PROMPT = "answer_user.txt"
 
 _trace = Trace(__name__)
-
-
-class ScoredMatch(Protocol):
-    """A retrieval match -- satisfied structurally by both ``ChunkMatch``
-    and ``ParentMatch`` without either depending on this module. Declared
-    as read-only properties (rather than plain attributes) so mypy checks
-    them covariantly -- both dataclasses are frozen, so their fields are
-    read-only in practice too.
-    """
-
-    @property
-    def text(self) -> str: ...
-
-    @property
-    def score(self) -> float: ...
 
 
 class AnswerContext(Protocol):

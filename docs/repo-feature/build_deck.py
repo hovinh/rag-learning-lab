@@ -945,10 +945,12 @@ rag-learning-lab/
             (
                 "graphrag.retrieval",
                 (
-                    "Embedder, OpenAIEmbedder, EntityEmbeddingIndexer, ENTITY_VECTOR_INDEX, "
-                    "GlobalSearch, KeyPoint, LocalSearch, LocalContext"
+                    "Embedder, OpenAIEmbedder, Retriever, ScoredMatch, VectorRetriever, "
+                    "HybridRetriever, ParentChildRetriever, StepBackRetriever, "
+                    "EntityEmbeddingIndexer, ENTITY_VECTOR_INDEX, GlobalSearch, KeyPoint, "
+                    "LocalSearch, LocalContext"
                 ),
-                "Embeddings; ch07 entity index and global/local search",
+                "Embeddings; question → scored matches; ch07 entity index, global/local search",
             ),
             (
                 "graphrag.settings",
@@ -988,7 +990,8 @@ rag-learning-lab/
                 (
                     "Agent, AgentResponse, QueryPlanner, QueryUpdater, QueryDecomposer, ToolRouter, "
                     "ToolRoutingError, AnswerCritic, Tool, ToolResult, string_parameters, "
-                    "AnswerGivenTool, Text2CypherTool, MovieInfoByTitleTool, MoviesInfoByActorTool"
+                    "AnswerGivenTool, Text2CypherTool, RetrieverTool, MovieInfoByTitleTool, "
+                    "MoviesInfoByActorTool"
                 ),
                 "ch05 agent loop and its tools; ch08 question splitting",
             ),
@@ -1046,9 +1049,9 @@ rag-learning-lab/
                 "`chunks` → `embeddings` → GraphStore / ParentChildGraphStore",
             ),
             (
-                "answer",
-                "AnswerStep",
-                "`question`, `matches` → `answer`",
+                "retrieval, answer",
+                "RetrieveStep (any Retriever), AnswerStep",
+                "`question` → `matches` → `answer`",
             ),
             (
                 "cypher",
@@ -1112,6 +1115,12 @@ rag-learning-lab/
                 "Kuzu in `tmp_path`",
             ),
             (
+                "Retriever",
+                "`retrieve(question)` → ScoredMatch list",
+                "VectorRetriever, HybridRetriever, ParentChildRetriever, StepBackRetriever",
+                "fake stores",
+            ),
+            (
                 "QueryPlanner",
                 "`plan(question, history)` → questions to route",
                 "QueryUpdater (ch05), QueryDecomposer (ch08)",
@@ -1120,7 +1129,10 @@ rag-learning-lab/
             (
                 "Tool",
                 "`name`, `description`, `parameters`, `run(arguments)` → ToolResult",
-                "MovieInfoByTitleTool, MoviesInfoByActorTool, Text2CypherTool, AnswerGivenTool",
+                (
+                    "MovieInfoByTitleTool, MoviesInfoByActorTool, Text2CypherTool, RetrieverTool, "
+                    "AnswerGivenTool"
+                ),
                 "real tools on a seeded graph",
             ),
             (
@@ -1149,8 +1161,8 @@ rag-learning-lab/
                 "callable `step(context)`"
             ),
             (
-                "Steps come from `graphrag.pipeline`; only the search steps still live in the "
-                "script (`VectorSearchStep`, `HybridSearchStep`)"
+                "Steps come from `graphrag.pipeline`; retrieval is a Retriever passed to "
+                "RetrieveStep, so swapping vector for hybrid search is one argument"
             ),
             "Stores are context managers, so the database connection is always closed",
             (
@@ -1176,9 +1188,8 @@ with RunLogging(process_name, LOG_DIR,
             EmbedChunksStep(embedder),
             StoreChunksStep(store),
         ]).run(context)
-        q = embedder.embed([context.question])[0]
         Pipeline([
-            HybridSearchStep(store, context.question, q, k=4),
+            RetrieveStep(HybridRetriever(store, embedder, k=4)),
             AnswerStep(llm, model="gpt-4o"),
         ]).run(context)
 """,
@@ -1292,7 +1303,7 @@ with RunLogging(process_name, LOG_DIR,
             "Chunk 500 / 40\nTextChunker",
             "Embed chunks\nOpenAIEmbedder",
             "Store in Kuzu\nKuzuGraphStore",
-            "Vector or hybrid search",
+            "Retrieve\nVector/HybridRetriever",
             "Answer\nAnswerStep",
         ),
         bullets=(
@@ -1336,8 +1347,8 @@ with KuzuGraphStore(db_path, embedding_dim=1536) as store:
             "Parents 2000\nchildren 500",
             "Embed children only",
             "Store hierarchy\nParent→Child",
-            "Step-back rewrite\nQueryRewriter",
-            "Parent retrieval → answer",
+            "Step-back rewrite\nStepBackRetriever",
+            "Parent retrieval → answer\nParentChildRetriever",
         ),
         bullets=(
             (

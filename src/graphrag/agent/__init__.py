@@ -5,6 +5,7 @@ from graphrag.agent.movie_tools import MovieInfoByTitleTool, MoviesInfoByActorTo
 from graphrag.agent.query_decomposer import QueryDecomposer
 from graphrag.agent.query_planner import QueryPlanner
 from graphrag.agent.query_updater import QueryUpdater
+from graphrag.agent.retriever_tool import RetrieverTool
 from graphrag.agent.router import ToolRouter
 from graphrag.agent.tools import (
     AnswerGivenTool,
@@ -24,6 +25,7 @@ __all__ = [
     "QueryDecomposer",
     "QueryPlanner",
     "QueryUpdater",
+    "RetrieverTool",
     "Text2CypherTool",
     "Tool",
     "ToolResult",
