@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from graphrag.extraction.contract_models import Contract, Location, Organization
+from graphrag.domains.contracts.models import Contract, Location, Organization
 from graphrag.graph.cypher_store import CypherGraphStore
 
 _CREATE_CONTRACT = """

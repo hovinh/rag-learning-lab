@@ -19,9 +19,8 @@ import argparse
 
 from constants import DEFAULT_ANSWER_MODEL, LOG_DIR
 from dotenv import load_dotenv
-from movie_agent import build_movie_agent
 
-from graphrag.datasets import MovieGraphSeeder
+from graphrag.domains.movies import MovieGraphSeeder, build_movie_agent
 from graphrag.graph import KuzuCypherGraphStore
 from graphrag.observability import RunLogging, Trace
 from graphrag.services import OpenAIServices
@@ -53,7 +52,7 @@ def main(process_name: str, verbose: bool) -> None:
             with trace.section("Seed the movies graph"):
                 MovieGraphSeeder(store).seed()
 
-            agent = build_movie_agent(llm, store)
+            agent = build_movie_agent(llm, store, model=DEFAULT_ANSWER_MODEL)
 
             for index, question in enumerate(QUESTIONS, start=1):
                 with trace.section(f"Question {index}/{len(QUESTIONS)}"):

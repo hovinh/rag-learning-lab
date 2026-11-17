@@ -1,7 +1,7 @@
 import pytest
 
-from graphrag.agent.movie_tools import MovieInfoByTitleTool, MoviesInfoByActorTool
-from graphrag.datasets.movie_graph import MovieGraphSeeder
+from graphrag.domains.movies.seeder import MovieGraphSeeder
+from graphrag.domains.movies.tools import MovieInfoByTitleTool, MoviesInfoByActorTool
 from graphrag.graph.kuzu_cypher_store import KuzuCypherGraphStore
 
 MATRIX_CAST = {"Keanu Reeves", "Carrie-Anne Moss", "Laurence Fishburne", "Hugo Weaving"}

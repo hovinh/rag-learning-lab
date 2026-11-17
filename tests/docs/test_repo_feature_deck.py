@@ -44,7 +44,7 @@ def _load_deck_module() -> ModuleType:
 def _public_names() -> list[tuple[str, str]]:
     """(package, name) for every public name in a ``graphrag`` module:
     its ``__all__``, or for a plain module without one (``settings``), the
-    classes it defines.
+    classes it defines -- plus every ``graphrag.domains`` pack's ``__all__``.
     """
     names = []
     for info in pkgutil.iter_modules(graphrag.__path__):
@@ -59,6 +59,11 @@ def _public_names() -> list[tuple[str, str]]:
                 and not name.startswith("_")
             ]
         names.extend((info.name, name) for name in exported)
+    # Domain packs are subpackages, so their public names are listed too.
+    domains = importlib.import_module("graphrag.domains")
+    for info in pkgutil.iter_modules(domains.__path__):
+        module = importlib.import_module(f"graphrag.domains.{info.name}")
+        names.extend((f"domains.{info.name}", name) for name in module.__all__)
     return names
 
 

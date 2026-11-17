@@ -23,9 +23,8 @@ from pathlib import Path
 
 from constants import DEFAULT_ANSWER_MODEL, LOG_DIR
 from dotenv import load_dotenv
-from movie_agent import build_movie_agent
 
-from graphrag.datasets import MOVIES_BENCHMARK_PATH, MovieGraphSeeder
+from graphrag.domains.movies import MOVIES_BENCHMARK_PATH, MovieGraphSeeder, build_movie_agent
 from graphrag.evaluation import (
     AnswerCorrectness,
     BenchmarkRunner,
@@ -77,7 +76,9 @@ def main(
             with KuzuCypherGraphStore(settings.db_path_for("ch08")) as store:
                 with trace.section("Seed the movies graph"):
                     MovieGraphSeeder(store).seed()
-                agent = build_movie_agent(llm, store, decompose=decompose)
+                agent = build_movie_agent(
+                    llm, store, decompose=decompose, model=DEFAULT_ANSWER_MODEL
+                )
                 with trace.section(f"Answer {len(cases)} benchmark questions"):
                     samples = BenchmarkRunner(store, agent.respond).run(cases)
             samples_path = LOG_DIR / f"{process_name}_samples.json"

@@ -11,6 +11,11 @@ requires-python = ">=3.11"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Prompts, domain data and the type marker, so a non-editable install of
+# graphrag (as another project's dependency) has them too.
+[tool.setuptools.package-data]
+"*" = ["*.txt", "*.csv", "py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

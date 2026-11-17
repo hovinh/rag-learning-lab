@@ -1,7 +1,7 @@
 import pytest
 
-from graphrag.extraction.contract_importer import ContractGraphImporter
-from graphrag.extraction.contract_models import Contract, Location, Organization
+from graphrag.domains.contracts.importer import ContractGraphImporter
+from graphrag.domains.contracts.models import Contract, Location, Organization
 from graphrag.graph.kuzu_cypher_store import KuzuCypherGraphStore
 
 CLIENT = Organization(

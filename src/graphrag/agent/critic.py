@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from graphrag.agent.scope import AgentScope
 from graphrag.llm.client import LLMClient, Message, OpenAILLMClient
 from graphrag.llm.errors import LLMResponseError
 from graphrag.llm.json_response import load_json_field, load_json_object
@@ -28,13 +29,14 @@ class AnswerCritic:
         llm: LLMClient,
         *,
         data_description: str | None = None,
+        scope: AgentScope | None = None,
         model: str = OpenAILLMClient.DEFAULT_MODEL,
         prompts: PromptRepository | None = None,
     ) -> None:
         self._llm = llm
         self._model = model
         prompts = prompts or PromptRepository()
-        self._system_message = prompts.load(_SYSTEM_PROMPT)
+        self._system_message = (scope or AgentScope()).fill(prompts.load(_SYSTEM_PROMPT))
         if data_description:
             data_section = prompts.load(_DATA_PROMPT).format(
                 data_description=data_description.strip()

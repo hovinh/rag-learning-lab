@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from graphrag.datasets import MOVIES_BENCHMARK_PATH, MovieGraphSeeder
+from graphrag.domains.movies import MOVIES_BENCHMARK_PATH, MovieGraphSeeder
 from graphrag.evaluation import load_benchmark
 from graphrag.graph.kuzu_cypher_store import KuzuCypherGraphStore
 

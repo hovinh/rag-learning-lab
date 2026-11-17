@@ -690,10 +690,10 @@ SLIDES: tuple[SlideSpec, ...] = (
             (
                 "shared",
                 "Used by several scripts",
-                "`movie_agent.py`, `constants.py`",
+                "`constants.py`",
                 (
-                    "`build_movie_agent()` wires the ch05 agent for ch05 and ch08; shared "
-                    "constants such as `MOVIES_TERMINOLOGY`"
+                    "PDF URL, log directory and model; domain data lives in `graphrag.domains`, "
+                    "e.g. `build_movie_agent()` for ch05 and ch08"
                 ),
             ),
         ),
@@ -750,7 +750,7 @@ SLIDES: tuple[SlideSpec, ...] = (
         subtitle="`movies_info_by_actor`: an actor's movies with full cast and directors",
         code_size=10.5,
         code=(
-            "// Cypher (movie_tools.py)\n"
+            "// Cypher (domains/movies/tools.py)\n"
             "MATCH (a:Person)-[:ACTED_IN]->(m:Movie)\n"
             "WHERE lower(a.name) CONTAINS $actor\n"
             "OPTIONAL MATCH (m)<-[:ACTED_IN]-(c:Person)\n"
@@ -834,7 +834,7 @@ rag-learning-lab/
 │   ├── evaluation/      benchmark runner, evaluator, RAGAS-style metrics
 │   ├── pipeline/        Pipeline + shared steps
 │   ├── observability/   Trace, RunLogging, UsageMeter: the run logs
-│   ├── datasets/        movies graph CSV files, benchmark, contract, Odyssey
+│   ├── domains/         domain packs: movies, contracts, odyssey
 │   └── settings.py      Settings.from_env()
 ├── examples/            one runnable script per chapter + README.md
 ├── tests/               pytest, mirrors src/graphrag/ package by package
@@ -852,8 +852,16 @@ rag-learning-lab/
                 "Entry points",
                 (
                     "examples/*.py\none composition root per chapter",
-                    "movie_agent.py\nbuild_movie_agent()",
                     "Settings.from_env()\n.env → OPENAI_API_KEY, KUZU_DB_PATH",
+                    "OpenAIServices\nLLM client + embedder",
+                ),
+            ),
+            Layer(
+                "Domain packs",
+                (
+                    "domains.movies\nseeder, tools, agent scope, benchmark",
+                    "domains.contracts\nContract model, importer, prompt",
+                    "domains.odyssey\ncorpus, entity types",
                 ),
             ),
             Layer(
@@ -974,15 +982,14 @@ rag-learning-lab/
             (
                 "graphrag.extraction",
                 (
-                    "StructuredExtractor, Contract, ContractType, Organization, Location, "
-                    "ContractGraphImporter, EntityRelationshipExtractor, ChunkExtraction, "
+                    "StructuredExtractor, EntityRelationshipExtractor, ChunkExtraction, "
                     "ExtractedEntity, ExtractedRelationship, EntityGraphImporter, "
                     "DescriptionSummarizer, KuzuLouvainCommunityDetector, CommunityReporter, "
                     "CommunityReport"
                 ),
                 (
-                    "ch06 schema-first extraction; ch07 schema-free entity graph, summaries, "
-                    "communities, reports"
+                    "Extraction into any Pydantic model; ch07 schema-free entity graph, "
+                    "summaries, communities, reports"
                 ),
             ),
             (
@@ -990,10 +997,9 @@ rag-learning-lab/
                 (
                     "Agent, AgentResponse, QueryPlanner, QueryUpdater, QueryDecomposer, ToolRouter, "
                     "ToolRoutingError, AnswerCritic, Tool, ToolResult, string_parameters, "
-                    "AnswerGivenTool, Text2CypherTool, RetrieverTool, MovieInfoByTitleTool, "
-                    "MoviesInfoByActorTool"
+                    "AnswerGivenTool, Text2CypherTool, RetrieverTool, AgentScope"
                 ),
-                "ch05 agent loop and its tools; ch08 question splitting",
+                "ch05 agent loop and generic tools; ch08 question splitting",
             ),
             (
                 "graphrag.evaluation",
@@ -1019,12 +1025,9 @@ rag-learning-lab/
                 "Runs steps over a context object",
             ),
             (
-                "graphrag.datasets",
-                (
-                    "MovieGraphSeeder, MOVIES_BENCHMARK_PATH, LICENSE_AGREEMENT_PATH, "
-                    "OdysseyCorpus, ODYSSEY_URL"
-                ),
-                "Bundled data for ch04–ch08",
+                "graphrag.domains",
+                "One subpackage per domain: see Domain packs",
+                "Everything specific to one dataset",
             ),
         ),
     ),
@@ -1080,6 +1083,44 @@ rag-learning-lab/
         caption=(
             "Shared field names are what let steps chain; a script only defines the context "
             "dataclass and the order of the steps."
+        ),
+    ),
+    TableSlide(
+        title="Domain packs",
+        subtitle=(
+            "`graphrag.domains`: what is specific to one dataset, so the core packages stay "
+            "domain-agnostic"
+        ),
+        header=("Pack", "Public API (__all__)", "Holds"),
+        widths=(2.1, 6.4, 3.8),
+        font_size=12,
+        rows=(
+            (
+                "domains.movies",
+                (
+                    "MovieGraphSeeder, MOVIES_TERMINOLOGY, MOVIES_CYPHER_EXAMPLES, "
+                    "MovieInfoByTitleTool, MoviesInfoByActorTool, movie_tools, "
+                    "MOVIES_AGENT_SCOPE, build_movie_agent, MOVIES_BENCHMARK_PATH"
+                ),
+                "Graph data and schema, text2cypher sections, agent tools and scope, benchmark",
+            ),
+            (
+                "domains.contracts",
+                (
+                    "Contract, ContractType, Organization, Location, ContractGraphImporter, "
+                    "build_contract_extractor, LICENSE_AGREEMENT_PATH"
+                ),
+                "Pydantic model, its extraction prompt, its graph, a sample agreement",
+            ),
+            (
+                "domains.odyssey",
+                "OdysseyCorpus, ODYSSEY_URL, ODYSSEY_ENTITY_TYPES",
+                "A DocumentSource of 24 books and the entity types to extract",
+            ),
+        ),
+        caption=(
+            "A new domain is a new pack: its data or DocumentSource, prompts, models, tools and "
+            "an AgentScope, wired from the generic classes."
         ),
     ),
     TableSlide(
@@ -1266,12 +1307,15 @@ with RunLogging(process_name, LOG_DIR,
                     "`agent_tool_picker_*`, `agent_tool_answer`, `agent_answer_critique_*`, "
                     "`agent_main_*`"
                 ),
-                "QueryUpdater, QueryDecomposer, ToolRouter, AnswerCritic, Agent",
+                (
+                    "QueryUpdater, QueryDecomposer, ToolRouter, AnswerCritic, Agent; "
+                    "AgentScope fills `{source}` and `{topic}`"
+                ),
             ),
             (
                 "Contracts",
-                "`contract_extraction_system`",
-                "StructuredExtractor (ch06)",
+                "`domains/contracts/contract_extraction_system`",
+                "build_contract_extractor (ch06)",
             ),
             (
                 "GraphRAG",
@@ -1461,7 +1505,10 @@ with KuzuCypherGraphStore(db_path) as store:
                 "follow-up questions, for one extra round"
             ),
             "An unknown tool or a missing argument raises ToolRoutingError",
-            "To add a tool: subclass Tool and pass it to ToolRouter",
+            (
+                "To add a tool: subclass Tool and pass it to ToolRouter. AgentScope words the "
+                "prompts for a domain (MOVIES_AGENT_SCOPE keeps the book's)"
+            ),
         ),
         code="""
 class MovieInfoByTitleTool(Tool):
@@ -1473,7 +1520,7 @@ class MovieInfoByTitleTool(Tool):
         return self._store.query(self._QUERY,
                                  {"title": arguments["title"].lower()})
 
-agent = build_movie_agent(llm, store)   # examples/movie_agent.py
+agent = build_movie_agent(llm, store)   # graphrag.domains.movies
 agent.run("Who's the main actor in the movie Matrix "
           "and what other movies is that person in?")
 """,
@@ -1511,11 +1558,8 @@ agent.run("Who's the main actor in the movie Matrix "
             ),
         ),
         code="""
-extractor = StructuredExtractor(
-    llm, Contract,
-    PromptRepository().load("contract_extraction_system.txt"),
-    model="gpt-4o",
-)
+# graphrag.domains.contracts: StructuredExtractor[Contract]
+extractor = build_contract_extractor(llm, model="gpt-4o")
 contract = extractor.extract(LICENSE_AGREEMENT_PATH.read_text())
 
 with KuzuCypherGraphStore(db_path) as store:

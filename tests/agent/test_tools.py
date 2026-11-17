@@ -42,13 +42,14 @@ class FakeCypherStore:
 
 
 def test_definition_uses_tool_name_description_and_parameters():
-    definition = AnswerGivenTool().definition()
+    tool = AnswerGivenTool()
+    definition = tool.definition()
 
     assert definition == {
         "type": "function",
         "function": {
             "name": "respond",
-            "description": AnswerGivenTool.description,
+            "description": tool.description,
             "parameters": string_parameters("answer", "Respond directly with the answer"),
         },
     }

@@ -52,14 +52,18 @@ src/
                     # SectionSplitter, Chunk
     llm/             # LLMClient (OpenAI wrapper, incl. structured outputs), QueryRewriter, TokenCounter
     graph/           # GraphStore/CypherGraphStore ABCs, Kuzu stores, Text2Cypher
-    datasets/        # sample data (MovieGraphSeeder + its CSVs, ch06's contract text, ch07's OdysseyCorpus,
-                     # ch08's movies benchmark)
-    retrieval/       # Embedder, EntityEmbeddingIndexer, GlobalSearch, LocalSearch
+    domains/         # one pack per dataset, keeping the packages above domain-agnostic:
+                     # movies/ (seeder + CSVs, tools, text2cypher sections, MOVIES_AGENT_SCOPE,
+                     # build_movie_agent, benchmark), contracts/ (Contract models, prompt,
+                     # importer, sample agreement), odyssey/ (OdysseyCorpus, entity types)
+    retrieval/       # Embedder, Retriever (vector, hybrid, parent-child, step-back),
+                     # EntityEmbeddingIndexer, GlobalSearch, LocalSearch
     prompts/         # PromptRepository + prompt text files
     pipeline/        # Pipeline runner + reusable steps (pipeline/steps/), each typed by
                      # a Protocol over the context fields it reads and writes
-    agent/           # Agent, QueryPlanner/QueryUpdater/QueryDecomposer, ToolRouter, AnswerCritic, Tool subclasses
-    extraction/      # Pydantic extraction models, StructuredExtractor, ContractGraphImporter,
+    agent/           # Agent, QueryPlanner/QueryUpdater/QueryDecomposer, ToolRouter, AnswerCritic,
+                     # generic Tool subclasses (Text2CypherTool, RetrieverTool), AgentScope
+    extraction/      # StructuredExtractor (any Pydantic model),
                      # ch07's entity extraction, summarization, communities and reports
     evaluation/      # ch08: benchmark loading, BenchmarkRunner, LLM-judged Metrics, Evaluator
     observability/   # Trace (structured, sectioned logging), RunLogging, UsageMeter

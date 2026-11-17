@@ -3,7 +3,7 @@ import json
 import pytest
 
 from graphrag.agent.agent import AgentResponse
-from graphrag.datasets import MovieGraphSeeder
+from graphrag.domains.movies import MovieGraphSeeder
 from graphrag.evaluation.models import BenchmarkCase
 from graphrag.evaluation.runner import BenchmarkRunner
 from graphrag.graph.errors import GraphQueryError

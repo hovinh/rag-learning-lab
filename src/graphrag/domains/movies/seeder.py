@@ -5,7 +5,7 @@ from typing import ClassVar
 
 from graphrag.graph.cypher_store import CypherGraphStore
 
-_DATA_DIR = Path(__file__).parent / "movies"
+_DATA_DIR = Path(__file__).parent / "data"
 
 
 class MovieGraphSeeder:

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from graphrag.extraction.contract_models import Contract, Location
+from graphrag.domains.contracts.models import Contract, Location
 
 
 def test_full_address_joins_all_parts():

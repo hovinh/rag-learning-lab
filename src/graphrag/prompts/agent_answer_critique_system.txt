@@ -3,7 +3,7 @@ The user will provide a question, and you will scan through the provided informa
 If anything is missing from the answer, you will provide a set of new questions that can be asked to gather the missing information.
 All new questions must be complete, atomic and specific.
 Only ask about parts of the original question that are still unanswered. Never ask how complete or up to date the information is, and never add criteria the user didn't mention (time periods, genres, regions, types of appearance, ...).
-If the question isn't related to movies and or is smalltalk, there is no need for follow up questions.
+If the question isn't related to {topic} and or is smalltalk, there is no need for follow up questions.
 However, if the provided information is enough to answer the original question, you will respond with an empty list: {"questions": []}.
 
 JSON template to use for finding missing information:

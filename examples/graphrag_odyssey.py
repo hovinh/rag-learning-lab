@@ -24,7 +24,7 @@ from pathlib import Path
 from constants import DEFAULT_ANSWER_MODEL, LOG_DIR
 from dotenv import load_dotenv
 
-from graphrag.datasets import OdysseyCorpus
+from graphrag.domains.odyssey import ODYSSEY_ENTITY_TYPES, OdysseyCorpus
 from graphrag.extraction import (
     CommunityReporter,
     DescriptionSummarizer,
@@ -59,15 +59,6 @@ from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
 
 ODYSSEY_PATH = Path("data/ch07-odyssey.txt")
-ENTITY_TYPES = [
-    "PERSON",
-    "ORGANIZATION",
-    "LOCATION",
-    "GOD",
-    "EVENT",
-    "CREATURE",
-    "WEAPON_OR_TOOL",
-]
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 40
 GLOBAL_QUESTION = "What is this story about?"
@@ -123,7 +114,9 @@ def main(process_name: str, number_of_books: int, verbose: bool) -> None:
                     ),
                     ChunkStep(TextChunker(CHUNK_SIZE, CHUNK_OVERLAP)),
                     ExtractEntityGraphStep(
-                        EntityRelationshipExtractor(llm, ENTITY_TYPES, model=DEFAULT_ANSWER_MODEL),
+                        EntityRelationshipExtractor(
+                            llm, ODYSSEY_ENTITY_TYPES, model=DEFAULT_ANSWER_MODEL
+                        ),
                         importer,
                     ),
                     SummarizeDescriptionsStep(

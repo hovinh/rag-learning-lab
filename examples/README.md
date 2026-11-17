@@ -227,7 +227,7 @@ similarity search can do, but which one Cypher query answers exactly.
 
 The book assumes Neo4j's "Movies" demo graph is already loaded. Kuzu has
 no such sample, so
-[`graphrag/datasets/movies/`](../src/graphrag/datasets/movies/) holds a
+[`graphrag/domains/movies/data/`](../src/graphrag/domains/movies/data/) holds a
 small hand-curated graph in the same shape: 14 films, 48 people, and
 `ACTED_IN` (with `roles`), `DIRECTED`, `PRODUCED`, and `WROTE`
 relationships. The films are picked so the questions in
@@ -236,7 +236,7 @@ Top Gun, The Matrix, and several Tom Hanks films. Cast, crew, years, and
 birth years are real; **`votes` values are illustrative**, made up only so
 the benchmark's "more than 5000 votes" question has something to filter.
 
-[`MovieGraphSeeder.seed()`](../src/graphrag/datasets/movie_graph.py)
+[`MovieGraphSeeder.seed()`](../src/graphrag/domains/movies/seeder.py)
 drops and recreates the tables and then bulk-loads one CSV per table with
 `COPY ... FROM`. Unlike Neo4j, Kuzu needs every node and relationship table
 declared (`CREATE NODE TABLE` / `CREATE REL TABLE`) before data goes in.
@@ -370,6 +370,16 @@ instead of being raised, so it becomes part of the history the critic sees.
 Every tool subclasses [`Tool`](../src/graphrag/agent/tools.py). One `name`
 serves as both the function name the LLM sees and the router's lookup key.
 To add a tool, subclass `Tool` and pass an instance to `ToolRouter`.
+`RetrieverTool` wraps any `Retriever` (vector, hybrid, parent-child) as a
+tool, for agents that should also search unstructured text.
+
+Everything movie-specific lives in the
+[`graphrag.domains.movies`](../src/graphrag/domains/movies/) pack: the
+tools, the text2cypher terminology and examples, and `build_movie_agent()`,
+which ch05 and ch08 share. The book's agent prompts hard-code movies;
+here they hold `{source}`/`{topic}` placeholders that an
+[`AgentScope`](../src/graphrag/agent/scope.py) fills, and
+`MOVIES_AGENT_SCOPE` fills them with the book's exact wording.
 
 ### Where this departs from the book
 
@@ -464,12 +474,12 @@ them down as Pydantic models, and have the LLM fill them in from a legal
 contract. Ch07 drops the predefined schema and lets the LLM decide.
 
 Pipeline: load the contract
-([`LICENSE_AGREEMENT_PATH`](../src/graphrag/datasets/sample_contracts.py),
+([`LICENSE_AGREEMENT_PATH`](../src/graphrag/domains/contracts/extractor.py),
 a 1999 licensing and web site hosting agreement from an SEC filing) →
 extract a `Contract`
 ([`StructuredExtractor`](../src/graphrag/extraction/extractor.py)) →
 import it into its own `_ch06` Kuzu database
-([`ContractGraphImporter`](../src/graphrag/extraction/contract_importer.py))
+([`ContractGraphImporter`](../src/graphrag/domains/contracts/importer.py))
 → query the parties back. The database is reset on every run.
 
 ### Structured outputs
@@ -480,7 +490,7 @@ model as `response_format`. The API turns it into a JSON schema and
 the declared types, and `contract_type` is always one of the five listed
 values. This is stronger than ch05's `json_mode`, which only guarantees
 valid JSON, so the prompt had to describe the shape. Here the field
-`description`s in [contract_models.py](../src/graphrag/extraction/contract_models.py)
+`description`s in [models.py](../src/graphrag/domains/contracts/models.py)
 are the instructions the LLM sees for each field.
 
 Strict mode requires every field to be present. That's why the optional
@@ -489,7 +499,9 @@ rather than having a default value.
 
 [`StructuredExtractor`](../src/graphrag/extraction/extractor.py) isn't tied
 to contracts. It takes any Pydantic model plus a system message
-(`contract_extraction_system.txt` here, the book's wording) and sends the
+(`contract_extraction_system.txt` here, the book's wording, kept in the
+[`graphrag.domains.contracts`](../src/graphrag/domains/contracts/) pack
+and wired by `build_contract_extractor()`) and sends the
 whole document in one call. The agreement is ~33k characters, well within
 the context window, so there's no chunking.
 
@@ -562,7 +574,7 @@ a specific entity spread across many passages.
 
 The corpus is Samuel Butler's translation of Homer's *Odyssey* from
 Project Gutenberg
-([`OdysseyCorpus`](../src/graphrag/datasets/odyssey.py), cached at
+([`OdysseyCorpus`](../src/graphrag/domains/odyssey/corpus.py), cached at
 `data/ch07-odyssey.txt`), split into its 24 books, which average about
 6,400 tokens (4,406–10,648; the script logs this with `TokenCounter`, as
 the book does). As in the book, only
@@ -743,8 +755,8 @@ Ch08 doesn't build anything new to retrieve with. It measures how well
 ch05's agent answers questions about the movies graph, so that a change
 to a prompt, a tool or the model can be judged by numbers rather than by
 reading a few answers. The script seeds the movies graph into its own
-`_ch08` Kuzu database, builds the same agent as ch05 (both scripts share
-[`movie_agent.py`](movie_agent.py)), runs the benchmark, and logs a score
+`_ch08` Kuzu database, builds the same agent as ch05 (both scripts call
+`build_movie_agent()` from `graphrag.domains.movies`), runs the benchmark, and logs a score
 per question plus each metric's mean. The per-question table (the book's
 final `test_data` frame) is also written to
 `logs/<process_name>_results.csv`. Each question takes roughly 5 agent
@@ -755,7 +767,7 @@ agent, which splits each question first (see "Question splitting" below).
 
 ### The benchmark
 
-[`movies_benchmark.csv`](../src/graphrag/datasets/benchmarks/movies_benchmark.csv)
+[`benchmark.csv`](../src/graphrag/domains/movies/benchmark.csv)
 is the book's `benchmark_data.csv`: 17 `question;cypher` rows. Storing
 Cypher instead of answers keeps the benchmark cheap to maintain: each row
 holds the query that computes its expected answer, and

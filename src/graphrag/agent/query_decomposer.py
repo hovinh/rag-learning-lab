@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from graphrag.agent.query_planner import QueryPlanner
+from graphrag.agent.scope import AgentScope
 from graphrag.llm.client import LLMClient, Message, OpenAILLMClient
 from graphrag.llm.errors import LLMResponseError
 from graphrag.llm.json_response import load_json_field
@@ -27,13 +28,14 @@ class QueryDecomposer(QueryPlanner):
         self,
         llm: LLMClient,
         *,
+        scope: AgentScope | None = None,
         model: str = OpenAILLMClient.DEFAULT_MODEL,
         prompts: PromptRepository | None = None,
     ) -> None:
         self._llm = llm
         self._model = model
         prompts = prompts or PromptRepository()
-        self._system_message = prompts.load(_SYSTEM_PROMPT)
+        self._system_message = (scope or AgentScope()).fill(prompts.load(_SYSTEM_PROMPT))
         self._user_template = prompts.load(_USER_PROMPT)
 
     def plan(self, question: str, history: Sequence[Message] = ()) -> list[str]:

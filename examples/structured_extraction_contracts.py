@@ -20,8 +20,12 @@ from dataclasses import dataclass, field
 from constants import DEFAULT_ANSWER_MODEL, LOG_DIR
 from dotenv import load_dotenv
 
-from graphrag.datasets import LICENSE_AGREEMENT_PATH
-from graphrag.extraction import Contract, ContractGraphImporter, StructuredExtractor
+from graphrag.domains.contracts import (
+    LICENSE_AGREEMENT_PATH,
+    Contract,
+    ContractGraphImporter,
+    build_contract_extractor,
+)
 from graphrag.graph import KuzuCypherGraphStore
 from graphrag.ingestion import TextFileSource
 from graphrag.observability import RunLogging, Trace
@@ -31,11 +35,8 @@ from graphrag.pipeline import (
     LoadDocumentsStep,
     Pipeline,
 )
-from graphrag.prompts import PromptRepository
 from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
-
-CONTRACT_EXTRACTION_PROMPT = "contract_extraction_system.txt"
 
 trace = Trace(__name__)
 
@@ -58,12 +59,7 @@ def main(process_name: str, verbose: bool) -> None:
         load_dotenv()
         settings = Settings.from_env()
         llm = OpenAIServices.create(settings, usage=run.usage).llm
-        extractor = StructuredExtractor(
-            llm,
-            Contract,
-            PromptRepository().load(CONTRACT_EXTRACTION_PROMPT),
-            model=DEFAULT_ANSWER_MODEL,
-        )
+        extractor = build_contract_extractor(llm, model=DEFAULT_ANSWER_MODEL)
 
         # Kept apart from the other chapters' databases, and reset on every run
         # so re-running doesn't pile up copies of the same contract.

@@ -1,4 +1,4 @@
-from graphrag.datasets.odyssey import OdysseyCorpus
+from graphrag.domains.odyssey.corpus import OdysseyCorpus
 
 GUTENBERG_TEXT = (
     "The Project Gutenberg eBook of The Odyssey\r\n"
@@ -29,7 +29,7 @@ class FakeResponse:
 def test_load_books_downloads_and_caches_the_text_unchanged(tmp_path, monkeypatch):
     requested = []
     monkeypatch.setattr(
-        "graphrag.datasets.odyssey.requests.get",
+        "graphrag.domains.odyssey.corpus.requests.get",
         lambda url, timeout: requested.append(url) or FakeResponse(),
     )
     corpus = OdysseyCorpus(tmp_path / "data" / "odyssey.txt", url="http://example.test/odyssey")

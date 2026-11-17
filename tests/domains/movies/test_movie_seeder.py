@@ -1,6 +1,6 @@
 import pytest
 
-from graphrag.datasets.movie_graph import MovieGraphSeeder
+from graphrag.domains.movies.seeder import MovieGraphSeeder
 from graphrag.graph.kuzu_cypher_store import KuzuCypherGraphStore
 
 

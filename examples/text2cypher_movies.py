@@ -17,15 +17,14 @@ import argparse
 from dataclasses import dataclass, field
 from typing import Any
 
-from constants import (
-    DEFAULT_ANSWER_MODEL,
-    LOG_DIR,
-    MOVIES_CYPHER_EXAMPLES,
-    MOVIES_TERMINOLOGY,
-)
+from constants import DEFAULT_ANSWER_MODEL, LOG_DIR
 from dotenv import load_dotenv
 
-from graphrag.datasets import MovieGraphSeeder
+from graphrag.domains.movies import (
+    MOVIES_CYPHER_EXAMPLES,
+    MOVIES_TERMINOLOGY,
+    MovieGraphSeeder,
+)
 from graphrag.graph import KuzuCypherGraphStore, Text2Cypher
 from graphrag.observability import RunLogging, Trace
 from graphrag.pipeline import ExecuteCypherStep, GenerateCypherStep, Pipeline

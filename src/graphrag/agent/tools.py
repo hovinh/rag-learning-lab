@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from typing import Any
 
+from graphrag.agent.scope import AgentScope
 from graphrag.graph.cypher_store import CypherGraphStore
 from graphrag.graph.errors import GraphQueryError
 from graphrag.graph.text2cypher import Text2Cypher
@@ -66,12 +67,15 @@ class AnswerGivenTool(Tool):
     """
 
     name = "respond"
-    description = (
-        "If the conversation already contains a complete answer to the question, use this "
-        "tool to extract it. Additionally, if the user engages in small talk, use this tool "
-        "to remind them that you can only answer questions about movies and their cast."
-    )
     parameters = string_parameters("answer", "Respond directly with the answer")
+
+    def __init__(self, scope: AgentScope | None = None) -> None:
+        capabilities = (scope or AgentScope()).capabilities
+        self.description = (
+            "If the conversation already contains a complete answer to the question, use this "
+            "tool to extract it. Additionally, if the user engages in small talk, use this tool "
+            f"to remind them that you can only answer {capabilities}."
+        )
 
     def run(self, arguments: Mapping[str, Any]) -> ToolResult:
         return str(arguments["answer"])
