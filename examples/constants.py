@@ -2,7 +2,6 @@
 (sample questions, chunk sizes, PDF/DB paths) stay in their own script.
 """
 
-import argparse
 from pathlib import Path
 
 from graphrag.graph import CypherExample
@@ -10,18 +9,6 @@ from graphrag.graph import CypherExample
 PDF_URL = "https://arxiv.org/pdf/1709.00666.pdf"
 LOG_DIR = Path("logs")
 DEFAULT_ANSWER_MODEL = "gpt-4o"
-
-
-def add_verbose_argument(parser: argparse.ArgumentParser) -> None:
-    """The ``--verbose`` flag every example takes (see ``RunLogging``)."""
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help=(
-            "Also show the full payloads (DEBUG lines) on the console; "
-            "logs/<process_name>.log always has them."
-        ),
-    )
 
 
 # text2cypher prompt sections for the movies graph (ch04, reused by ch05's

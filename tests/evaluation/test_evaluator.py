@@ -75,3 +75,24 @@ def test_means_of_an_unscored_metric_is_none():
 def test_evaluator_rejects_duplicate_metric_names():
     with pytest.raises(ValueError):
         Evaluator([FixedMetric("x", {}), FixedMetric("x", {})])
+
+
+def test_write_csv_writes_one_row_per_question(tmp_path):
+    import csv
+
+    from graphrag.evaluation.evaluator import log_report
+
+    metric = FixedMetric("correctness", {"a": 1.0})
+    report = Evaluator([metric]).evaluate([make_sample("a", 1.5), make_sample("b", error="boom")])
+    path = tmp_path / "results.csv"
+
+    report.write_csv(path)
+    log_report(report)
+
+    with path.open(encoding="utf-8", newline="") as file:
+        rows = list(csv.reader(file))
+    assert rows == [
+        ["question", "ground_truth", "answer", "error", "latency", "correctness"],
+        ["a", "[]", "answer", "", "1.500", "1.000"],
+        ["b", "[]", "", "boom", "1.000", "n/a"],
+    ]

@@ -16,16 +16,21 @@ import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, PDF_URL, add_verbose_argument
+from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, PDF_URL
 from dotenv import load_dotenv
-from openai import OpenAI
 
 from graphrag.graph import ChunkMatch, GraphStore, KuzuGraphStore
-from graphrag.ingestion import PdfLoader, TextChunker
-from graphrag.llm import OpenAILLMClient
+from graphrag.ingestion import Chunk, PdfSource, TextChunker
 from graphrag.observability import RunLogging, Trace
-from graphrag.pipeline import AnswerStep, LoadPdfTextStep, Pipeline
-from graphrag.retrieval import Embedder, OpenAIEmbedder
+from graphrag.pipeline import (
+    AnswerStep,
+    ChunkStep,
+    EmbedChunksStep,
+    LoadDocumentsStep,
+    Pipeline,
+    StoreChunksStep,
+)
+from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
 
 PDF_PATH = Path("data/ch02-downloaded.pdf")
@@ -37,29 +42,11 @@ trace = Trace(__name__)
 @dataclass
 class Ch02Context:
     question: str
-    text: str = ""
-    chunks: list[str] = field(default_factory=list)
+    documents: list[str] = field(default_factory=list)
+    chunks: list[Chunk] = field(default_factory=list)
     embeddings: list[list[float]] = field(default_factory=list)
     matches: list[ChunkMatch] = field(default_factory=list)
     answer: str = ""
-
-
-class ChunkStep:
-    def __init__(self, chunker: TextChunker) -> None:
-        self._chunker = chunker
-
-    def __call__(self, context: Ch02Context) -> None:
-        context.chunks = self._chunker.split(context.text)
-        trace.field("chunks", len(context.chunks))
-
-
-class EmbedChunksStep:
-    def __init__(self, embedder: Embedder) -> None:
-        self._embedder = embedder
-
-    def __call__(self, context: Ch02Context) -> None:
-        context.embeddings = self._embedder.embed(context.chunks)
-        trace.field("embedded", f"{len(context.embeddings)} chunks")
 
 
 class VectorSearchStep:
@@ -99,25 +86,24 @@ def main(process_name: str, verbose: bool) -> None:
     ) as run:
         load_dotenv()
         settings = Settings.from_env()
-        openai_client = OpenAI(api_key=settings.openai_api_key)
-        embedder = OpenAIEmbedder(openai_client, usage=run.usage)
-        llm = OpenAILLMClient(openai_client, usage=run.usage)
+        services = OpenAIServices.create(settings, usage=run.usage)
+        embedder, llm = services.embedder, services.llm
 
         context = Ch02Context(question=QUESTION)
 
-        with trace.section("Ingest the PDF"):
-            ingestion: Pipeline[Ch02Context] = Pipeline(
-                [
-                    LoadPdfTextStep(PdfLoader(), PDF_URL, PDF_PATH),
-                    ChunkStep(TextChunker(chunk_size=500, overlap=40)),
-                    EmbedChunksStep(embedder),
-                ]
-            )
-            ingestion.run(context)
-
-        with KuzuGraphStore(settings.kuzu_db_path, embedding_dim=embedder.dimensions) as store:
-            with trace.section("Store chunks in Kuzu"):
-                store.replace_chunks(context.chunks, context.embeddings)
+        with KuzuGraphStore(
+            settings.db_path_for("ch02"), embedding_dim=embedder.dimensions
+        ) as store:
+            with trace.section("Ingest the PDF into Kuzu"):
+                ingestion: Pipeline[Ch02Context] = Pipeline(
+                    [
+                        LoadDocumentsStep(PdfSource(PDF_URL, PDF_PATH)),
+                        ChunkStep(TextChunker(chunk_size=500, overlap=40)),
+                        EmbedChunksStep(embedder),
+                        StoreChunksStep(store),
+                    ]
+                )
+                ingestion.run(context)
 
             question_embedding = embedder.embed([context.question])[0]
 
@@ -142,11 +128,6 @@ def main(process_name: str, verbose: bool) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--process-name",
-        default="ch02_pdf_qa",
-        help="Names the log file written to logs/<process_name>.log.",
-    )
-    add_verbose_argument(parser)
+    RunLogging.add_arguments(parser, default_process_name="ch02_pdf_qa")
     args = parser.parse_args()
     main(args.process_name, args.verbose)

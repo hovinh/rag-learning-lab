@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import csv
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from graphrag.evaluation.metrics import Metric
 from graphrag.evaluation.models import EvaluationSample
 from graphrag.llm.errors import LLMResponseError
-from graphrag.observability import Trace
+from graphrag.observability import Trace, format_duration, preview
 
 _trace = Trace(__name__)
 
@@ -45,6 +47,26 @@ class EvaluationReport:
 
     def failed(self) -> list[EvaluationSample]:
         return [row.sample for row in self.rows if row.sample.error is not None]
+
+    def write_csv(self, path: Path) -> None:
+        """One row per question, like the book's final ``test_data`` table."""
+        with path.open("w", encoding="utf-8", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(
+                ["question", "ground_truth", "answer", "error", "latency", *self.metric_names]
+            )
+            for row in self.rows:
+                sample = row.sample
+                writer.writerow(
+                    [
+                        sample.question,
+                        sample.ground_truth,
+                        sample.answer,
+                        sample.error or "",
+                        f"{sample.latency:.3f}",
+                        *(format_score(row.scores[name]) for name in self.metric_names),
+                    ]
+                )
 
 
 class Evaluator:
@@ -85,3 +107,32 @@ class Evaluator:
 
 def format_score(score: float | None) -> str:
     return "n/a" if score is None else f"{score:.3f}"
+
+
+def log_report(report: EvaluationReport) -> None:
+    """Traces the per-question scores as a table, then the means and the
+    questions that failed to answer.
+    """
+    _trace.table(
+        "scores",
+        [
+            {
+                "#": index,
+                "question": preview(row.sample.question, 45),
+                "latency": format_duration(row.sample.latency),
+                **{name: format_score(score) for name, score in row.scores.items()},
+            }
+            for index, row in enumerate(report.rows, start=1)
+        ],
+        max_width=45,
+    )
+    mean_latency = report.mean_latency()
+    _trace.fields(
+        {
+            **{f"mean {name}": format_score(mean) for name, mean in report.means().items()},
+            "mean latency": "n/a" if mean_latency is None else format_duration(mean_latency),
+            "failed": f"{len(report.failed())}/{len(report.rows)} questions",
+        }
+    )
+    for sample in report.failed():
+        _trace.field("failed", f"{sample.question}: {sample.error}", level=logging.WARNING)

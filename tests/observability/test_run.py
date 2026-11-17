@@ -65,3 +65,16 @@ def test_usage_meter_snapshots_subtract():
     assert used == Usage(1, 100, 20, 1, 7)
     assert used.describe() == "1 LLM call · 120 tokens · 1 embedding call"
     assert Usage().describe() == ""
+
+
+def test_add_arguments_adds_process_name_and_verbose():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    RunLogging.add_arguments(parser, default_process_name="ch99")
+
+    assert vars(parser.parse_args([])) == {"process_name": "ch99", "verbose": False}
+    assert vars(parser.parse_args(["--process-name", "x", "--verbose"])) == {
+        "process_name": "x",
+        "verbose": True,
+    }

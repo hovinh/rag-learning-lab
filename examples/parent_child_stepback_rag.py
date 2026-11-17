@@ -15,20 +15,27 @@ prompting fit together. Requires OPENAI_API_KEY in .env (see
 from __future__ import annotations
 
 import argparse
-import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, PDF_URL, add_verbose_argument
+from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, PDF_URL
 from dotenv import load_dotenv
-from openai import OpenAI
 
-from graphrag.graph import KuzuParentChildGraphStore, ParentMatch
-from graphrag.ingestion import PdfLoader, SectionSplitter, TextChunker
-from graphrag.llm import OpenAILLMClient, QueryRewriter, TokenCounter
+from graphrag.graph import KuzuParentChildGraphStore, ParentChildGraphStore, ParentMatch
+from graphrag.ingestion import PdfSource, SectionSplitter, TextChunker
+from graphrag.llm import QueryRewriter, TokenCounter
 from graphrag.observability import RunLogging, Trace
-from graphrag.pipeline import AnswerStep, LoadPdfTextStep, Pipeline
-from graphrag.retrieval import Embedder, OpenAIEmbedder
+from graphrag.pipeline import (
+    AnswerStep,
+    EmbedChildrenStep,
+    LoadDocumentsStep,
+    ParentChildChunkStep,
+    Pipeline,
+    SplitSectionsStep,
+    StoreParentChildStep,
+)
+from graphrag.retrieval import Embedder
+from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
 
 PDF_PATH = Path("data/ch03-downloaded.pdf")
@@ -42,71 +49,13 @@ trace = Trace(__name__)
 @dataclass
 class Ch03Context:
     question: str
-    text: str = ""
-    sections: list[str] = field(default_factory=list)
+    documents: list[str] = field(default_factory=list)
     parents: list[str] = field(default_factory=list)
     children_per_parent: list[list[str]] = field(default_factory=list)
     child_embeddings_per_parent: list[list[list[float]]] = field(default_factory=list)
     step_back_question: str = ""
     matches: list[ParentMatch] = field(default_factory=list)
     answer: str = ""
-
-
-class SectionSplitStep:
-    title = "Split into titled sections"
-
-    def __init__(self, splitter: SectionSplitter, token_counter: TokenCounter) -> None:
-        self._splitter = splitter
-        self._token_counter = token_counter
-
-    def __call__(self, context: Ch03Context) -> None:
-        context.sections = self._splitter.split(context.text)
-        # The book prints the token counts to show why sections are
-        # chunked further: some are far longer than one passage of context
-        # should be.
-        tokens = [self._token_counter.count(section) for section in context.sections]
-        trace.fields(
-            {
-                "sections": len(context.sections),
-                "tokens": (
-                    f"min {min(tokens)}, max {max(tokens)}, mean {sum(tokens) / len(tokens):.0f}"
-                ),
-            }
-        )
-        trace.field("per section", tokens, level=logging.DEBUG)
-
-
-class ParentChildChunkStep:
-    title = "Chunk into parents and children"
-
-    def __init__(self, parent_chunker: TextChunker, child_chunker: TextChunker) -> None:
-        self._parent_chunker = parent_chunker
-        self._child_chunker = child_chunker
-
-    def __call__(self, context: Ch03Context) -> None:
-        parents: list[str] = []
-        for section in context.sections:
-            parents.extend(self._parent_chunker.split(section))
-        context.parents = parents
-        context.children_per_parent = [self._child_chunker.split(parent) for parent in parents]
-        trace.fields(
-            {
-                "parents": len(context.parents),
-                "children": sum(len(children) for children in context.children_per_parent),
-            }
-        )
-
-
-class EmbedChildrenStep:
-    def __init__(self, embedder: Embedder) -> None:
-        self._embedder = embedder
-
-    def __call__(self, context: Ch03Context) -> None:
-        context.child_embeddings_per_parent = [
-            self._embedder.embed(children) for children in context.children_per_parent
-        ]
-        embedded = sum(len(vectors) for vectors in context.child_embeddings_per_parent)
-        trace.field("embedded", f"{embedded} child chunks")
 
 
 class StepBackRewriteStep:
@@ -123,7 +72,7 @@ class StepBackRewriteStep:
 class ParentRetrievalStep:
     title = "Parent retrieval (match children, return parents)"
 
-    def __init__(self, store: KuzuParentChildGraphStore, embedder: Embedder, k: int) -> None:
+    def __init__(self, store: ParentChildGraphStore, embedder: Embedder, k: int) -> None:
         self._store = store
         self._embedder = embedder
         self._k = k
@@ -143,46 +92,33 @@ def main(process_name: str, verbose: bool) -> None:
     ) as run:
         load_dotenv()
         settings = Settings.from_env()
-        openai_client = OpenAI(api_key=settings.openai_api_key)
-        embedder = OpenAIEmbedder(openai_client, usage=run.usage)
-        llm = OpenAILLMClient(openai_client, usage=run.usage)
-        query_rewriter = QueryRewriter(llm)
+        services = OpenAIServices.create(settings, usage=run.usage)
+        embedder, llm = services.embedder, services.llm
 
         context = Ch03Context(question=QUESTION)
 
-        with trace.section("Ingest the PDF"):
-            ingestion: Pipeline[Ch03Context] = Pipeline(
-                [
-                    LoadPdfTextStep(PdfLoader(), PDF_URL, PDF_PATH),
-                    SectionSplitStep(SectionSplitter(), TokenCounter()),
-                    ParentChildChunkStep(
-                        parent_chunker=TextChunker(
-                            chunk_size=PARENT_CHUNK_SIZE, overlap=PARENT_OVERLAP
+        with KuzuParentChildGraphStore(
+            settings.db_path_for("ch03"), embedding_dim=embedder.dimensions
+        ) as store:
+            with trace.section("Ingest the PDF into Kuzu"):
+                ingestion: Pipeline[Ch03Context] = Pipeline(
+                    [
+                        LoadDocumentsStep(PdfSource(PDF_URL, PDF_PATH)),
+                        SplitSectionsStep(SectionSplitter(), TokenCounter()),
+                        ParentChildChunkStep(
+                            parent_chunker=TextChunker(PARENT_CHUNK_SIZE, PARENT_OVERLAP),
+                            child_chunker=TextChunker(CHILD_CHUNK_SIZE, CHILD_OVERLAP),
                         ),
-                        child_chunker=TextChunker(
-                            chunk_size=CHILD_CHUNK_SIZE, overlap=CHILD_OVERLAP
-                        ),
-                    ),
-                    EmbedChildrenStep(embedder),
-                ]
-            )
-            ingestion.run(context)
-
-        # Kept apart from ch02's database so running one chapter doesn't wipe
-        # the other's corpus (every replace_* call rebuilds its store).
-        db_path = settings.kuzu_db_path.with_name(f"{settings.kuzu_db_path.name}_ch03")
-        with KuzuParentChildGraphStore(db_path, embedding_dim=embedder.dimensions) as store:
-            with trace.section("Store the parent/child hierarchy in Kuzu"):
-                store.replace_parents(
-                    context.parents,
-                    context.children_per_parent,
-                    context.child_embeddings_per_parent,
+                        EmbedChildrenStep(embedder),
+                        StoreParentChildStep(store),
+                    ]
                 )
+                ingestion.run(context)
 
             with trace.section("Answer with step-back + parent retrieval"):
                 retrieval: Pipeline[Ch03Context] = Pipeline(
                     [
-                        StepBackRewriteStep(query_rewriter),
+                        StepBackRewriteStep(QueryRewriter(llm)),
                         ParentRetrievalStep(store, embedder, k=4),
                         AnswerStep(llm, model=DEFAULT_ANSWER_MODEL),
                     ]
@@ -192,11 +128,6 @@ def main(process_name: str, verbose: bool) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--process-name",
-        default="ch03_parent_child_stepback_rag",
-        help="Names the log file written to logs/<process_name>.log.",
-    )
-    add_verbose_argument(parser)
+    RunLogging.add_arguments(parser, default_process_name="ch03_parent_child_stepback_rag")
     args = parser.parse_args()
     main(args.process_name, args.verbose)

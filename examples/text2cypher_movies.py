@@ -22,16 +22,14 @@ from constants import (
     LOG_DIR,
     MOVIES_CYPHER_EXAMPLES,
     MOVIES_TERMINOLOGY,
-    add_verbose_argument,
 )
 from dotenv import load_dotenv
-from openai import OpenAI
 
 from graphrag.datasets import MovieGraphSeeder
-from graphrag.graph import CypherGraphStore, KuzuCypherGraphStore, Text2Cypher
-from graphrag.llm import OpenAILLMClient
+from graphrag.graph import KuzuCypherGraphStore, Text2Cypher
 from graphrag.observability import RunLogging, Trace
-from graphrag.pipeline import Pipeline
+from graphrag.pipeline import ExecuteCypherStep, GenerateCypherStep, Pipeline
+from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
 
 QUESTION = "Who directed the most movies?"
@@ -46,33 +44,6 @@ class Ch04Context:
     rows: list[dict[str, Any]] = field(default_factory=list)
 
 
-class GenerateCypherStep:
-    title = "Generate Cypher (text2cypher)"
-
-    def __init__(self, text2cypher: Text2Cypher) -> None:
-        self._text2cypher = text2cypher
-
-    def __call__(self, context: Ch04Context) -> None:
-        trace.field("question", context.question)
-        context.cypher = self._text2cypher.generate(context.question)
-        trace.field("cypher", context.cypher)
-
-
-class ExecuteCypherStep:
-    """Runs the generated Cypher -- the book's ch04 notebook only prints
-    it, but executing it is what shows the query is valid against the graph.
-    """
-
-    title = "Run the Cypher against Kuzu"
-
-    def __init__(self, store: CypherGraphStore) -> None:
-        self._store = store
-
-    def __call__(self, context: Ch04Context) -> None:
-        context.rows = self._store.query(context.cypher)
-        trace.table("rows", context.rows)
-
-
 def main(process_name: str, verbose: bool) -> None:
     with RunLogging(
         process_name,
@@ -83,12 +54,11 @@ def main(process_name: str, verbose: bool) -> None:
     ) as run:
         load_dotenv()
         settings = Settings.from_env()
-        llm = OpenAILLMClient(OpenAI(api_key=settings.openai_api_key), usage=run.usage)
+        llm = OpenAIServices.create(settings, usage=run.usage).llm
 
-        # Kept apart from ch02/ch03's databases: seeding drops and recreates
-        # its tables on every run.
-        db_path = settings.kuzu_db_path.with_name(f"{settings.kuzu_db_path.name}_ch04")
-        with KuzuCypherGraphStore(db_path) as store:
+        # Kept apart from the other chapters' databases: seeding drops and
+        # recreates its tables on every run.
+        with KuzuCypherGraphStore(settings.db_path_for("ch04")) as store:
             with trace.section("Seed the movies graph"):
                 MovieGraphSeeder(store).seed()
                 schema = store.get_schema()
@@ -110,11 +80,6 @@ def main(process_name: str, verbose: bool) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--process-name",
-        default="ch04_text2cypher_movies",
-        help="Names the log file written to logs/<process_name>.log.",
-    )
-    add_verbose_argument(parser)
+    RunLogging.add_arguments(parser, default_process_name="ch04_text2cypher_movies")
     args = parser.parse_args()
     main(args.process_name, args.verbose)

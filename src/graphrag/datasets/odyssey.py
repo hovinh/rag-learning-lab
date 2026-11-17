@@ -4,19 +4,24 @@ from pathlib import Path
 
 import requests
 
+from graphrag.ingestion.sources import DocumentSource
+
 # Samuel Butler's prose translation of Homer's Odyssey on Project Gutenberg,
 # the corpus the book's ch07 builds its knowledge graph from.
 ODYSSEY_URL = "https://www.gutenberg.org/cache/epub/1727/pg1727.txt"
 
 
-class OdysseyCorpus:
+class OdysseyCorpus(DocumentSource):
     """Downloads the Odyssey (cached at ``path``) and splits it into its 24
-    books (ch07's ``chunk_into_books``).
+    books (ch07's ``chunk_into_books``), one document each.
     """
 
     def __init__(self, path: Path, url: str = ODYSSEY_URL) -> None:
         self._path = path
         self._url = url
+
+    def load(self) -> list[str]:
+        return self.load_books()
 
     def load_books(self, *, timeout: float = 30.0) -> list[str]:
         if not self._path.exists():

@@ -48,19 +48,23 @@ Guidelines:
 ```
 src/
   graphrag/
-    ingestion/      # PdfLoader, TextChunker, SectionSplitter
+    ingestion/      # DocumentSource (PdfSource, TextFileSource), PdfLoader, TextChunker,
+                    # SectionSplitter, Chunk
     llm/             # LLMClient (OpenAI wrapper, incl. structured outputs), QueryRewriter, TokenCounter
     graph/           # GraphStore/CypherGraphStore ABCs, Kuzu stores, Text2Cypher
     datasets/        # sample data (MovieGraphSeeder + its CSVs, ch06's contract text, ch07's OdysseyCorpus,
                      # ch08's movies benchmark)
     retrieval/       # Embedder, EntityEmbeddingIndexer, GlobalSearch, LocalSearch
     prompts/         # PromptRepository + prompt text files
-    pipeline/        # Pipeline runner + steps shared across chapters
+    pipeline/        # Pipeline runner + reusable steps (pipeline/steps/), each typed by
+                     # a Protocol over the context fields it reads and writes
     agent/           # Agent, QueryPlanner/QueryUpdater/QueryDecomposer, ToolRouter, AnswerCritic, Tool subclasses
     extraction/      # Pydantic extraction models, StructuredExtractor, ContractGraphImporter,
                      # ch07's entity extraction, summarization, communities and reports
     evaluation/      # ch08: benchmark loading, BenchmarkRunner, LLM-judged Metrics, Evaluator
     observability/   # Trace (structured, sectioned logging), RunLogging, UsageMeter
+    services.py      # OpenAIServices: the LLM client + embedder a composition root builds
+    settings.py      # Settings.from_env(), db_path_for(name)
 tests/
   ...                # mirrors src/graphrag structure
 docs/

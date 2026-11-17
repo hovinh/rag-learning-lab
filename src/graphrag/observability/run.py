@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import io
 import logging
 import os
@@ -66,6 +67,25 @@ class RunLogging:
         self._saved_levels: dict[str, int] = {}
         self._meter_token: Token[UsageMeter | None] | None = None
         self._start = 0.0
+
+    @staticmethod
+    def add_arguments(parser: argparse.ArgumentParser, *, default_process_name: str) -> None:
+        """The ``--process-name`` and ``--verbose`` flags a script passes
+        on to ``RunLogging``.
+        """
+        parser.add_argument(
+            "--process-name",
+            default=default_process_name,
+            help="Names the log file written to logs/<process_name>.log.",
+        )
+        parser.add_argument(
+            "--verbose",
+            action="store_true",
+            help=(
+                "Also show the full payloads (DEBUG lines) on the console; "
+                "logs/<process_name>.log always has them."
+            ),
+        )
 
     def __enter__(self) -> Self:
         for stream in (sys.stdout, sys.stderr):

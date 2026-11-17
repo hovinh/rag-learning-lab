@@ -121,3 +121,29 @@ def test_create_schema_is_idempotent_without_reset(store, importer):
     importer.create_schema()
 
     assert store.query("MATCH (c:Contract) RETURN count(c) AS n") == [{"n": 1}]
+
+
+def test_contract_ids_lists_every_imported_contract(importer):
+    assert importer.contract_ids() == []
+
+    first = importer.import_contract(make_contract([CLIENT]))
+    second = importer.import_contract(make_contract([PROVIDER]))
+
+    assert sorted(importer.contract_ids()) == sorted([first, second])
+
+
+def test_parties_reads_a_contracts_parties_back(importer):
+    contract_id = importer.import_contract(make_contract([PROVIDER, CLIENT]))
+
+    assert importer.parties(contract_id) == [
+        {
+            "organization": "Mortgage Logic.com, Inc.",
+            "role": "Client",
+            "location": CLIENT.location.full_address(),
+        },
+        {
+            "organization": "TrueLink, Inc.",
+            "role": "Provider",
+            "location": PROVIDER.location.full_address(),
+        },
+    ]

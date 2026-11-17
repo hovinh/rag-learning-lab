@@ -17,15 +17,14 @@ from __future__ import annotations
 
 import argparse
 
-from constants import DEFAULT_ANSWER_MODEL, LOG_DIR, add_verbose_argument
+from constants import DEFAULT_ANSWER_MODEL, LOG_DIR
 from dotenv import load_dotenv
 from movie_agent import build_movie_agent
-from openai import OpenAI
 
 from graphrag.datasets import MovieGraphSeeder
 from graphrag.graph import KuzuCypherGraphStore
-from graphrag.llm import OpenAILLMClient
 from graphrag.observability import RunLogging, Trace
+from graphrag.services import OpenAIServices
 from graphrag.settings import Settings
 
 QUESTIONS = [
@@ -46,12 +45,11 @@ def main(process_name: str, verbose: bool) -> None:
     ) as run:
         load_dotenv()
         settings = Settings.from_env()
-        llm = OpenAILLMClient(OpenAI(api_key=settings.openai_api_key), usage=run.usage)
+        llm = OpenAIServices.create(settings, usage=run.usage).llm
 
         # Kept apart from the other chapters' databases: seeding drops and
         # recreates its tables on every run.
-        db_path = settings.kuzu_db_path.with_name(f"{settings.kuzu_db_path.name}_ch05")
-        with KuzuCypherGraphStore(db_path) as store:
+        with KuzuCypherGraphStore(settings.db_path_for("ch05")) as store:
             with trace.section("Seed the movies graph"):
                 MovieGraphSeeder(store).seed()
 
@@ -66,11 +64,6 @@ def main(process_name: str, verbose: bool) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--process-name",
-        default="ch05_agentic_rag_movies",
-        help="Names the log file written to logs/<process_name>.log.",
-    )
-    add_verbose_argument(parser)
+    RunLogging.add_arguments(parser, default_process_name="ch05_agentic_rag_movies")
     args = parser.parse_args()
     main(args.process_name, args.verbose)

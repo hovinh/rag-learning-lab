@@ -49,3 +49,11 @@ def test_load_books_reads_a_cached_copy(tmp_path):
     books = OdysseyCorpus(path, url="http://unused.invalid").load_books()
 
     assert len(books) == 2
+
+
+def test_load_returns_the_books_as_documents(tmp_path):
+    path = tmp_path / "odyssey.txt"
+    path.write_text(GUTENBERG_TEXT, encoding="utf-8")
+    corpus = OdysseyCorpus(path, url="http://unused.invalid")
+
+    assert corpus.load() == corpus.load_books()

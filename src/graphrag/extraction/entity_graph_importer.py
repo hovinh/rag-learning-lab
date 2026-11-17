@@ -135,3 +135,14 @@ class EntityGraphImporter:
                 "strength": relationship.strength,
             },
         )
+
+    def count_entities(self) -> int:
+        [row] = self._store.query("MATCH (e:Entity) RETURN count(*) AS n")
+        return int(row["n"])
+
+    def count_relationships(self) -> int:
+        """Every extracted mention, before ``DescriptionSummarizer``
+        collapses them per pair.
+        """
+        [row] = self._store.query("MATCH ()-[r:RELATIONSHIP]->() RETURN count(*) AS n")
+        return int(row["n"])

@@ -1,50 +1,8 @@
 from dataclasses import dataclass, field
 
 from graphrag.llm.client import LLMClient
-from graphrag.pipeline.steps import AnswerStep, LoadPdfTextStep
+from graphrag.pipeline.steps import AnswerStep
 from graphrag.prompts.repository import PromptRepository
-
-
-@dataclass
-class TextContext:
-    text: str = ""
-
-
-class FakePdfLoader:
-    def __init__(self, text: str = "extracted text") -> None:
-        self.text = text
-        self.downloaded: tuple[str, object] | None = None
-
-    def download(self, url, dest):
-        self.downloaded = (url, dest)
-        dest.write_text("pdf bytes", encoding="utf-8")
-        return dest
-
-    def extract_text(self, path):
-        return self.text
-
-
-def test_load_pdf_text_step_downloads_when_file_missing(tmp_path):
-    path = tmp_path / "doc.pdf"
-    loader = FakePdfLoader()
-    context = TextContext()
-
-    LoadPdfTextStep(loader, "https://example.com/doc.pdf", path)(context)
-
-    assert loader.downloaded == ("https://example.com/doc.pdf", path)
-    assert context.text == "extracted text"
-
-
-def test_load_pdf_text_step_skips_download_when_file_exists(tmp_path):
-    path = tmp_path / "doc.pdf"
-    path.write_text("already here", encoding="utf-8")
-    loader = FakePdfLoader()
-    context = TextContext()
-
-    LoadPdfTextStep(loader, "https://example.com/doc.pdf", path)(context)
-
-    assert loader.downloaded is None
-    assert context.text == "extracted text"
 
 
 @dataclass

@@ -92,3 +92,14 @@ def test_create_schema_reset_discards_the_graph(entity_store, entity_importer):
     entity_importer.create_schema(reset=True)
 
     assert entity_store.query("MATCH (e:Entity) RETURN count(e) AS n") == [{"n": 0}]
+
+
+def test_counts_entities_and_relationship_mentions(entity_importer):
+    assert (entity_importer.count_entities(), entity_importer.count_relationships()) == (0, 0)
+    relationship = ExtractedRelationship("ULYSSES", "ITHACA", "Ulysses rules Ithaca", 9.0)
+
+    entity_importer.import_chunk(0, 0, "text", ChunkExtraction([ULYSSES, ITHACA], [relationship]))
+    entity_importer.import_chunk(0, 1, "text", ChunkExtraction([ULYSSES], [relationship]))
+
+    assert entity_importer.count_entities() == 2
+    assert entity_importer.count_relationships() == 2

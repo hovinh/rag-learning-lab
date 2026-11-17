@@ -936,8 +936,11 @@ rag-learning-lab/
             ),
             (
                 "graphrag.ingestion",
-                "PdfLoader, SectionSplitter, TextChunker",
-                "Download, extract text, split into sections and chunks",
+                (
+                    "DocumentSource, PdfSource, TextFileSource, PdfLoader, SectionSplitter, "
+                    "TextChunker, Chunk"
+                ),
+                "Where documents come from; split them into sections and chunks",
             ),
             (
                 "graphrag.retrieval",
@@ -950,7 +953,12 @@ rag-learning-lab/
             (
                 "graphrag.settings",
                 "Settings",
-                "Runtime config read once from the environment",
+                "Runtime config read once from the environment; `db_path_for(name)`",
+            ),
+            (
+                "graphrag.services",
+                "OpenAIServices",
+                "LLM client + embedder sharing one OpenAI client and UsageMeter",
             ),
         ),
     ),
@@ -990,7 +998,7 @@ rag-learning-lab/
                     "BenchmarkCase, load_benchmark, BenchmarkRunner, Responder, EvaluationSample, "
                     "Evaluator, EvaluationReport, ScoredSample, Metric, AnswerCorrectness, "
                     "ContextRecall, Faithfulness, StatementExtractor, save_samples, load_samples, "
-                    "format_score"
+                    "format_score, log_report"
                 ),
                 "ch08 benchmark answers, LLM-judge metrics, reports, saved samples",
             ),
@@ -1004,7 +1012,7 @@ rag-learning-lab/
             ),
             (
                 "graphrag.pipeline",
-                "Pipeline, LoadPdfTextStep, AnswerStep",
+                "Pipeline, PipelineStep, and every step on the next slide",
                 "Runs steps over a context object",
             ),
             (
@@ -1015,6 +1023,60 @@ rag-learning-lab/
                 ),
                 "Bundled data for ch04–ch08",
             ),
+        ),
+    ),
+    TableSlide(
+        title="Pipeline steps",
+        subtitle=(
+            "`graphrag.pipeline`: each step declares the context fields it needs as a Protocol, "
+            "so any dataclass with them can run it"
+        ),
+        header=("Module", "Steps", "Context fields read → written"),
+        widths=(1.7, 6.0, 4.6),
+        font_size=11.5,
+        rows=(
+            (
+                "ingestion",
+                "LoadDocumentsStep, SplitSectionsStep, ChunkStep, ParentChildChunkStep",
+                "DocumentSource → `documents` → `chunks` / `parents`, `children_per_parent`",
+            ),
+            (
+                "indexing",
+                "EmbedChunksStep, StoreChunksStep, EmbedChildrenStep, StoreParentChildStep",
+                "`chunks` → `embeddings` → GraphStore / ParentChildGraphStore",
+            ),
+            (
+                "answer",
+                "AnswerStep",
+                "`question`, `matches` → `answer`",
+            ),
+            (
+                "cypher",
+                "GenerateCypherStep, ExecuteCypherStep",
+                "`question` → `cypher` → `rows`",
+            ),
+            (
+                "extraction",
+                "ExtractStructuredStep, ImportExtractedStep",
+                "`documents` → `extracted` (Pydantic models) → `imported_ids`",
+            ),
+            (
+                "graph_index",
+                (
+                    "ExtractEntityGraphStep, SummarizeDescriptionsStep, DetectCommunitiesStep, "
+                    "ReportCommunitiesStep, IndexEntitiesStep"
+                ),
+                "`chunks` → the ch07 entity graph; later steps work on the graph only",
+            ),
+            (
+                "graph_search",
+                "GlobalSearchStep, LocalSearchStep",
+                "`question` → `key_points` / `local_context`, `answer`",
+            ),
+        ),
+        caption=(
+            "Shared field names are what let steps chain; a script only defines the context "
+            "dataclass and the order of the steps."
         ),
     ),
     TableSlide(
@@ -1087,13 +1149,13 @@ rag-learning-lab/
                 "callable `step(context)`"
             ),
             (
-                "Shared steps live in `graphrag.pipeline`; chapter-specific steps (`ChunkStep`, "
-                "`HybridSearchStep`) live in the script"
+                "Steps come from `graphrag.pipeline`; only the search steps still live in the "
+                "script (`VectorSearchStep`, `HybridSearchStep`)"
             ),
             "Stores are context managers, so the database connection is always closed",
             (
-                "`RunLogging` wraps the whole run; clients get `usage=run.usage` so the log "
-                "counts every LLM call"
+                "`RunLogging` wraps the whole run; `OpenAIServices.create(settings, "
+                "usage=run.usage)` makes the LLM client and embedder, so the log counts every call"
             ),
         ),
         code="""
@@ -1101,20 +1163,19 @@ with RunLogging(process_name, LOG_DIR,
                 verbose=verbose) as run:
     load_dotenv()
     settings = Settings.from_env()
-    client = OpenAI(api_key=settings.openai_api_key)
-    embedder = OpenAIEmbedder(client, usage=run.usage)
-    llm = OpenAILLMClient(client, usage=run.usage)
+    services = OpenAIServices.create(settings,
+                                     usage=run.usage)
+    embedder, llm = services.embedder, services.llm
 
     context = Ch02Context(question=QUESTION)
-    Pipeline([
-        LoadPdfTextStep(PdfLoader(), PDF_URL, PDF_PATH),
-        ChunkStep(TextChunker(chunk_size=500, overlap=40)),
-        EmbedChunksStep(embedder),
-    ]).run(context)
-
-    with KuzuGraphStore(settings.kuzu_db_path,
+    with KuzuGraphStore(settings.db_path_for("ch02"),
                         embedding_dim=embedder.dimensions) as store:
-        store.replace_chunks(context.chunks, context.embeddings)
+        Pipeline([
+            LoadDocumentsStep(PdfSource(PDF_URL, PDF_PATH)),
+            ChunkStep(TextChunker(chunk_size=500, overlap=40)),
+            EmbedChunksStep(embedder),
+            StoreChunksStep(store),
+        ]).run(context)
         q = embedder.embed([context.question])[0]
         Pipeline([
             HybridSearchStep(store, context.question, q, k=4),

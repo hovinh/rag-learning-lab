@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Protocol
 
-from graphrag.ingestion.pdf_loader import PdfLoader
 from graphrag.llm.client import LLMClient, OpenAILLMClient
 from graphrag.observability import Trace, preview
 from graphrag.prompts import PromptRepository
@@ -14,35 +12,6 @@ _ANSWER_SYSTEM_PROMPT = "answer_system.txt"
 _ANSWER_USER_PROMPT = "answer_user.txt"
 
 _trace = Trace(__name__)
-
-
-class HasText(Protocol):
-    """A context exposing a mutable ``text`` attribute, e.g. one written to
-    by ``LoadPdfTextStep``.
-    """
-
-    text: str
-
-
-class LoadPdfTextStep:
-    """Downloads the PDF (if not already on disk) and extracts its text
-    into ``context.text``. Identical across chapters -- ch02 and ch03 both
-    start from the same "download a PDF, read its text" step.
-    """
-
-    title = "Load PDF text"
-
-    def __init__(self, pdf_loader: PdfLoader, url: str, path: Path) -> None:
-        self._pdf_loader = pdf_loader
-        self._url = url
-        self._path = path
-
-    def __call__(self, context: HasText) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        if not self._path.exists():
-            self._pdf_loader.download(self._url, self._path)
-        context.text = self._pdf_loader.extract_text(self._path)
-        _trace.field("text", f"{len(context.text):,} characters from {self._path}")
 
 
 class ScoredMatch(Protocol):

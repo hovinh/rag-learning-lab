@@ -4,6 +4,7 @@ from graphrag.evaluation.evaluator import (
     Evaluator,
     ScoredSample,
     format_score,
+    log_report,
 )
 from graphrag.evaluation.metrics import AnswerCorrectness, ContextRecall, Faithfulness, Metric
 from graphrag.evaluation.models import BenchmarkCase, EvaluationSample
@@ -27,5 +28,6 @@ __all__ = [
     "format_score",
     "load_benchmark",
     "load_samples",
+    "log_report",
     "save_samples",
 ]
