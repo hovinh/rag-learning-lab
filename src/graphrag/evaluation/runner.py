@@ -30,33 +30,42 @@ _trace = Trace(__name__)
 
 class BenchmarkRunner:
     """Runs each benchmark question through the system under test (ch08):
-    computes the ground truth by running the case's Cypher against
-    ``store``, then times ``respond`` (e.g. ``Agent.respond`` or a
-    recipe's ``query``) answering
-    the question.
+    takes the case's written answer as the ground truth, or computes it by
+    running the case's Cypher against ``store``, then times ``respond``
+    (e.g. ``Agent.respond`` or a recipe's ``query``) answering the
+    question.
     """
 
-    def __init__(self, store: CypherGraphStore, respond: Responder) -> None:
-        self._store = store
+    def __init__(self, respond: Responder, *, store: CypherGraphStore | None = None) -> None:
         self._respond = respond
+        self._store = store
 
     def run(self, cases: Sequence[BenchmarkCase]) -> list[EvaluationSample]:
         """A ground-truth query the database rejects raises
         ``GraphQueryError``: that's a broken benchmark, not a wrong answer.
+        A Cypher case without a ``store`` raises ``ValueError``.
         """
+        if self._store is None and any(case.cypher is not None for case in cases):
+            raise ValueError("Cypher ground truths need a store to run on")
         samples = []
         for index, case in enumerate(cases, start=1):
             with _trace.section(f"Answer [{index}/{len(cases)}] {case.question}"):
                 samples.append(self._run_case(case))
         return samples
 
-    def _run_case(self, case: BenchmarkCase) -> EvaluationSample:
+    def _ground_truth(self, case: BenchmarkCase) -> str:
+        if case.answer is not None:
+            return case.answer
+        assert self._store is not None and case.cypher is not None  # checked in run()
+        rows = self._store.query(case.cypher)
+        _trace.summary("truth", rows)
         # default=str: Kuzu can return values JSON has no type for (e.g.
         # dates); ensure_ascii=False keeps names like "Miloš Forman" readable
         # to the judge LLM.
-        rows = self._store.query(case.cypher)
-        _trace.summary("truth", rows)
-        ground_truth = json.dumps(rows, default=str, ensure_ascii=False)
+        return json.dumps(rows, default=str, ensure_ascii=False)
+
+    def _run_case(self, case: BenchmarkCase) -> EvaluationSample:
+        ground_truth = self._ground_truth(case)
         start = time.perf_counter()
         try:
             response = self._respond(case.question)

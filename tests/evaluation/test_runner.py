@@ -26,7 +26,7 @@ def test_run_records_ground_truth_answer_and_contexts(store):
         asked.append(question)
         return AgentResponse("There are 14 movies.", ["14 movies"])
 
-    [sample] = BenchmarkRunner(store, respond).run([CASE])
+    [sample] = BenchmarkRunner(respond, store=store).run([CASE])
 
     assert asked == [CASE.question]
     assert sample.question == CASE.question
@@ -44,7 +44,7 @@ def test_run_records_a_failed_answer_and_carries_on(store):
         return AgentResponse("Hi!", [])
 
     hello = BenchmarkCase("Hello", 'RETURN "hi" AS x')
-    failed, answered = BenchmarkRunner(store, respond).run([CASE, hello])
+    failed, answered = BenchmarkRunner(respond, store=store).run([CASE, hello])
 
     assert failed.error == "RuntimeError('boom')"
     assert failed.answer == ""
@@ -55,7 +55,23 @@ def test_run_records_a_failed_answer_and_carries_on(store):
 
 
 def test_run_raises_on_a_broken_ground_truth_query(store):
-    runner = BenchmarkRunner(store, lambda question: AgentResponse("", []))
+    runner = BenchmarkRunner(lambda question: AgentResponse("", []), store=store)
 
     with pytest.raises(GraphQueryError):
         runner.run([BenchmarkCase("?", "MATCH (n:NoSuchTable) RETURN n")])
+
+
+def test_run_takes_a_written_answer_as_ground_truth_without_a_store():
+    case = BenchmarkCase("Who is Telemachus?", answer="Ulysses' son.")
+
+    [sample] = BenchmarkRunner(lambda question: AgentResponse("His son.", ["ctx"])).run([case])
+
+    assert sample.ground_truth == "Ulysses' son."
+    assert sample.answer == "His son."
+
+
+def test_run_refuses_cypher_cases_without_a_store():
+    runner = BenchmarkRunner(lambda question: AgentResponse("", []))
+
+    with pytest.raises(ValueError, match="store"):
+        runner.run([CASE])

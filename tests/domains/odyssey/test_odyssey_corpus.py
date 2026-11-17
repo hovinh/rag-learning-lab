@@ -57,3 +57,12 @@ def test_load_returns_the_books_as_documents(tmp_path):
     corpus = OdysseyCorpus(path, url="http://unused.invalid")
 
     assert corpus.load() == corpus.load_books()
+
+
+def test_load_keeps_only_the_first_books(tmp_path):
+    path = tmp_path / "odyssey.txt"
+    path.write_text(GUTENBERG_TEXT, encoding="utf-8")
+
+    [book] = OdysseyCorpus(path, url="http://unused.invalid", books=1).load()
+
+    assert "Tell me, O Muse." in book

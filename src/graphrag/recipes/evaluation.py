@@ -14,7 +14,8 @@ from graphrag.retrieval.embedder import Embedder
 class RagEvaluation:
     """ch08 as a recipe: ``answer`` runs benchmark questions
     through any responder (``AgenticRag.query``, ``VectorRag.query``, ...),
-    computing each ground truth with the case's Cypher on ``store``; then
+    taking each ground truth from the case's written answer or its Cypher
+    on ``store``; then
     ``score`` judges the answers with LLM metrics -- by default the book's
     three, answer correctness, context recall and faithfulness.
 
@@ -41,9 +42,14 @@ class RagEvaluation:
         )
 
     def answer(
-        self, store: CypherGraphStore, cases: Sequence[BenchmarkCase], respond: Responder
+        self,
+        cases: Sequence[BenchmarkCase],
+        respond: Responder,
+        *,
+        store: CypherGraphStore | None = None,
     ) -> list[EvaluationSample]:
-        return BenchmarkRunner(store, respond).run(cases)
+        """``store`` is only needed for cases whose ground truth is Cypher."""
+        return BenchmarkRunner(respond, store=store).run(cases)
 
     def score(self, samples: Sequence[EvaluationSample]) -> EvaluationReport:
         return self._evaluator.evaluate(samples)

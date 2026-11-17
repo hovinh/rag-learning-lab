@@ -18,6 +18,7 @@ from graphrag.pipeline.steps.graph_search import GlobalSearchStep, LocalSearchSt
 from graphrag.pipeline.steps.indexing import (
     EmbedChildrenStep,
     EmbedChunksStep,
+    GenerateQuestionsStep,
     StoreChunksStep,
     StoreParentChildStep,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "ExtractEntityGraphStep",
     "ExtractStructuredStep",
     "GenerateCypherStep",
+    "GenerateQuestionsStep",
     "GlobalSearchStep",
     "ImportExtractedStep",
     "IndexEntitiesStep",

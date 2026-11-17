@@ -10,6 +10,7 @@ done) and queries on every later run.
 from graphrag.recipes.agentic_rag import AgenticRag
 from graphrag.recipes.evaluation import RagEvaluation
 from graphrag.recipes.graph_rag import GraphRag
+from graphrag.recipes.hypothetical_question_rag import HypotheticalQuestionRag
 from graphrag.recipes.models import CypherAnswer, RagAnswer
 from graphrag.recipes.parent_child_rag import ParentChildRag
 from graphrag.recipes.structured_extraction import StructuredGraphExtraction
@@ -20,6 +21,7 @@ __all__ = [
     "AgenticRag",
     "CypherAnswer",
     "GraphRag",
+    "HypotheticalQuestionRag",
     "ParentChildRag",
     "RagAnswer",
     "RagEvaluation",

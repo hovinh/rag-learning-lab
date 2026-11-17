@@ -1067,3 +1067,100 @@ actor in the movie Matrix and what other movies is that person in?" the
 second question couldn't name the actor ("What other movies is the actor
 in the movie Matrix in?"). The critic's follow-up round filled that in,
 and the answer named Keanu Reeves and *The Matrix Reloaded*.
+
+## Beyond the book — Hypothetical question embedding
+
+[`HypotheticalQuestionRag`](../src/graphrag/recipes/hypothetical_question_rag.py)
+indexes each chunk under the questions it answers instead of under its
+own text. A user's question is then matched question-to-question, which
+usually embeds closer than question-to-passage, and the LLM is handed the
+chunk the matched questions came from.
+
+- [`HypotheticalQuestionGenerator`](../src/graphrag/llm/hypothetical_questions.py)
+  writes `questions_per_chunk` questions per chunk with
+  `hypothetical_questions_system.txt`. It takes a required `purpose`: who
+  asks, and about what. The embeddings only capture what the questions ask
+  about, so the purpose decides which facts in a chunk can be found. For
+  the Odyssey it's `ODYSSEY_QUESTION_PURPOSE`.
+- There's no new store. The chunk is a parent and its questions are the
+  children, so ch03's `ParentChildGraphStore`, `EmbedChildrenStep`,
+  `StoreParentChildStep` and `ParentChildRetriever` do the rest.
+  `GenerateQuestionsStep` turns `chunks` into `parents` plus questions as
+  `children_per_parent`.
+- Indexing costs one LLM call per chunk (11 calls, about 9.5k tokens, for
+  Odyssey Book I in 2000-character chunks). Querying costs the same as
+  vector search.
+- The questions must stand on their own. Without a bad/good example in the
+  prompt, gpt-4o wrote "What caused the men of the hero to perish according
+  to the passage?", which embeds like no user question would.
+
+## Benchmarking the text recipes
+
+[`benchmark_text_recipes_odyssey.py`](benchmark_text_recipes_odyssey.py)
+runs every text recipe over the same corpus and scores them with
+`RagEvaluation` (ch08's metrics, gpt-4o as answerer and judge, k=4):
+
+```
+.venv/Scripts/python.exe examples/benchmark_text_recipes_odyssey.py --process-name benchmark_text_recipes_odyssey
+```
+
+- **Corpus:** Odyssey Book I (`OdysseyCorpus(..., books=1)`, 21.6k
+  characters), indexed by each recipe into its own `bench_*` Kuzu database.
+- **Benchmark:** `ODYSSEY_BENCHMARK_PATH`, 20 questions with written
+  answers checked against the text. 13 are "specific" (one passage
+  answers them) and 7 "broad" (they need the whole book). Ground truth
+  here is text, not Cypher, so `BenchmarkCase` takes either an `answer`
+  or a `cypher`, and `BenchmarkRunner` only needs a store for Cypher.
+- **Flags:** `--variants` to run a subset, `--limit N`, `--rescore` to
+  re-judge the saved `logs/<process>_<variant>_samples.json`, `--reindex`.
+- **Output:** a comparison table in the log and
+  `logs/<process>_comparison.csv`, plus per-variant result CSVs.
+
+### Results (one run, 45 minutes, 1.2M tokens)
+
+| Variant | Correct | Specific | Broad | Recall | Faithful | Latency | Tokens/q |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| VectorRag vector | 0.651 | 0.679 | 0.601 | 0.657 | 0.947 | 1.9s | 713 |
+| VectorRag hybrid | 0.645 | 0.702 | 0.540 | 0.608 | 0.947 | 2.1s | 717 |
+| **ParentChildRag** | **0.785** | **0.793** | **0.769** | 0.806 | 0.978 | 2.0s | 2.2k |
+| ParentChildRag + step-back | 0.749 | 0.792 | 0.669 | **0.915** | 0.988 | 3.0s | 2.4k |
+| HypotheticalQuestionRag | 0.733 | 0.747 | 0.707 | 0.871 | **1.000** | 2.2s | 2.2k |
+| GraphRag local | 0.616 | 0.622 | 0.606 | 0.821 | 0.920 | 4.7s | 2.3k |
+| GraphRag global | 0.475 | 0.442 | 0.536 | 0.323 | 0.628 | 11.3s | 7.5k |
+
+Read it with two caveats. It's one run of 20 questions, so gaps under about
+0.05 are noise. And VectorRag hands the LLM four 500-character chunks
+while the parent-based recipes hand it four 2000-character ones, so part
+of their lead is simply more context.
+
+### What it says
+
+- **ParentChildRag is the default for text.** It had the best correctness
+  overall and on both question types, at the latency of plain vector
+  search, and indexing only embeds.
+- **Step-back trades correctness for recall.** The broader rewrite
+  retrieved more of the facts the answer needs (0.915 recall), but broad
+  questions scored lower (0.669 vs 0.769), and it adds an LLM call.
+- **Hypothetical questions were a close second.** Every answer was fully
+  supported by its context (1.000 faithful), with high recall. Reach for
+  it when users' questions follow a pattern you can state as a `purpose`.
+- **Hybrid didn't beat vector** (0.645 vs 0.651). Keyword matches added
+  nothing on this corpus.
+- **GraphRag lost on a single book.** Four 2000-character parents already
+  cover about 37% of Book I, so chunk retrieval sees most of what a
+  community report would. Global answers were long and drew on the model's
+  own knowledge of the Odyssey (Nestor, Menelaus, later books). For one
+  broad question the map step found no key points at all, which is why
+  faithfulness is 0.628. Its advantage needs a corpus too big for any
+  top-k of chunks to summarize. This run doesn't show it, and confirming
+  it would take a multi-book benchmark.
+
+### Choosing a recipe
+
+| Your data | Go-to recipe |
+| --- | --- |
+| Unstructured text | `ParentChildRag` (step-back off unless questions are narrow and oddly worded) |
+| Text with predictable questions | `HypotheticalQuestionRag` with a `purpose` |
+| Large corpus, whole-corpus questions | `GraphRag.global_search` |
+| An already-structured graph | `Text2CypherQA` |
+| Several sources, open-ended questions | `AgenticRag` over `Text2CypherTool` / `RetrieverTool` (0.88 correct on the movies benchmark) |

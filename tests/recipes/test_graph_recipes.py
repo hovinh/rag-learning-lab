@@ -115,7 +115,7 @@ def test_rag_evaluation_answers_with_any_pipeline_then_scores(movies_store, llm,
     cases = [BenchmarkCase("How many movies?", "MATCH (m:Movie) RETURN count(*) AS n")]
 
     samples = evaluation.answer(
-        movies_store, cases, lambda question: RagAnswer(question, "14", ["a", "b"])
+        cases, lambda question: RagAnswer(question, "14", ["a", "b"]), store=movies_store
     )
     report = evaluation.score(samples)
 

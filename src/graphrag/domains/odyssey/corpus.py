@@ -13,15 +13,18 @@ ODYSSEY_URL = "https://www.gutenberg.org/cache/epub/1727/pg1727.txt"
 
 class OdysseyCorpus(DocumentSource):
     """Downloads the Odyssey (cached at ``path``) and splits it into its 24
-    books (ch07's ``chunk_into_books``), one document each.
+    books (ch07's ``chunk_into_books``), one document each. ``books``
+    keeps only the first ones, so recipes without a ``limit`` of their own
+    index the same slice.
     """
 
-    def __init__(self, path: Path, url: str = ODYSSEY_URL) -> None:
+    def __init__(self, path: Path, url: str = ODYSSEY_URL, *, books: int | None = None) -> None:
         self._path = path
         self._url = url
+        self._books = books
 
     def load(self) -> list[str]:
-        return self.load_books()
+        return self.load_books()[: self._books]
 
     def load_books(self, *, timeout: float = 30.0) -> list[str]:
         if not self._path.exists():

@@ -688,6 +688,12 @@ SLIDES: tuple[SlideSpec, ...] = (
                 "RagEvaluation: BenchmarkRunner, Evaluator, AnswerCorrectness, ContextRecall, Faithfulness",
             ),
             (
+                "extra",
+                "Hypothetical questions; benchmarking the text recipes",
+                "`benchmark_text_recipes_odyssey.py`",
+                "HypotheticalQuestionRag, RagEvaluation over 7 variants, ODYSSEY_BENCHMARK_PATH",
+            ),
+            (
                 "shared",
                 "Used by several scripts",
                 "`constants.py`",
@@ -919,12 +925,12 @@ rag-learning-lab/
                 "graphrag.llm",
                 (
                     "LLMClient, OpenAILLMClient, Message, ToolCall, ToolDefinition, "
-                    "LLMResponseError, QueryRewriter, TokenCounter, load_json_object, "
-                    "load_json_field"
+                    "LLMResponseError, QueryRewriter, HypotheticalQuestionGenerator, "
+                    "TokenCounter, load_json_object, load_json_field"
                 ),
                 (
-                    "Chat, tool choice and structured output; step-back rewriting; tiktoken "
-                    "counts; tolerant JSON parsing"
+                    "Chat, tool choice and structured output; step-back rewriting; questions a "
+                    "chunk answers; tiktoken counts; JSON parsing"
                 ),
             ),
             (
@@ -1031,9 +1037,9 @@ rag-learning-lab/
             (
                 "graphrag.recipes",
                 (
-                    "VectorRag, SearchMode, ParentChildRag, Text2CypherQA, "
-                    "StructuredGraphExtraction, GraphRag, AgenticRag, RagEvaluation, RagAnswer, "
-                    "CypherAnswer"
+                    "VectorRag, SearchMode, ParentChildRag, HypotheticalQuestionRag, "
+                    "Text2CypherQA, StructuredGraphExtraction, GraphRag, AgenticRag, "
+                    "RagEvaluation, RagAnswer, CypherAnswer"
                 ),
                 "Recipes (predefined pipelines): index once, query on every later run",
             ),
@@ -1061,8 +1067,14 @@ rag-learning-lab/
             ),
             (
                 "indexing",
-                "EmbedChunksStep, StoreChunksStep, EmbedChildrenStep, StoreParentChildStep",
-                "`chunks` → `embeddings` → GraphStore / ParentChildGraphStore",
+                (
+                    "EmbedChunksStep, StoreChunksStep, GenerateQuestionsStep, EmbedChildrenStep, "
+                    "StoreParentChildStep"
+                ),
+                (
+                    "`chunks` → `embeddings` → GraphStore; `chunks` → `parents` + questions as "
+                    "children → ParentChildGraphStore"
+                ),
             ),
             (
                 "retrieval, answer",
@@ -1127,8 +1139,14 @@ rag-learning-lab/
             ),
             (
                 "domains.odyssey",
-                "OdysseyCorpus, ODYSSEY_URL, ODYSSEY_ENTITY_TYPES",
-                "A DocumentSource of 24 books and the entity types to extract",
+                (
+                    "OdysseyCorpus, ODYSSEY_URL, ODYSSEY_ENTITY_TYPES, ODYSSEY_BENCHMARK_PATH, "
+                    "ODYSSEY_QUESTION_PURPOSE"
+                ),
+                (
+                    "24 books (`books=` keeps the first), entity types, a Book I benchmark, the "
+                    "purpose hypothetical questions serve"
+                ),
             ),
         ),
         caption=(
@@ -1176,6 +1194,12 @@ rag-learning-lab/
                 "the domain's queries",
             ),
             (
+                "HypotheticalQuestionRag",
+                "ParentChildGraphStore, a `purpose`",
+                "`index(source)`: chunks, LLM questions per chunk",
+                "`query(q)`: question-to-question match",
+            ),
+            (
                 "GraphRag (ch07)",
                 "CypherGraphStore, entity types",
                 "`index(source, limit=)`: entity graph, communities",
@@ -1185,7 +1209,7 @@ rag-learning-lab/
                 "RagEvaluation (ch08)",
                 "Metric list (the book's three by default)",
                 "—",
-                "`answer(store, cases, respond)`, `score(samples)`",
+                "`answer(cases, respond, store=)`, `score(samples)`",
             ),
         ),
         caption=(
@@ -1722,7 +1746,7 @@ LocalSearch(store, llm, embedder, model="gpt-4o").search(
         code="""
 cases = load_benchmark(MOVIES_BENCHMARK_PATH)
 agent = build_movie_agent(llm, store, decompose=False)
-samples = BenchmarkRunner(store, agent.respond).run(cases)
+samples = BenchmarkRunner(agent.respond, store=store).run(cases)
 save_samples(samples, Path("logs/ch08_samples.json"))
 
 report = Evaluator([
@@ -1733,6 +1757,244 @@ report = Evaluator([
 report.means(); report.failed()      # rows: ScoredSample
 """,
         command=".venv/Scripts/python examples/evaluate_agent_movies.py --limit 5",
+    ),
+    ChapterSlide(
+        title="extra · Hypothetical question embedding",
+        subtitle="Not in the book's notebooks: index each chunk under the questions it answers",
+        flow=(
+            "Load documents",
+            "Chunk 2000\nChunkStep",
+            "LLM writes questions\nGenerateQuestionsStep",
+            "Embed questions only\nEmbedChildrenStep",
+            "Store chunk→questions\nParentChildGraphStore",
+            "Match question to\nquestions → chunk",
+        ),
+        bullets=(
+            (
+                "A user question is matched question-to-question, which embeds closer than "
+                "question-to-passage"
+            ),
+            (
+                "`purpose` (who asks, about what) steers which facts the questions cover: the "
+                "index only captures what they ask about"
+            ),
+            (
+                "Reuses ch03's store: the chunk is the parent, its questions are the children, "
+                "so retrieval hands back the chunk"
+            ),
+            "Costs one LLM call per chunk at index time; querying costs the same as vector search",
+        ),
+        code="""
+rag = HypotheticalQuestionRag(
+    store, embedder, llm,          # KuzuParentChildGraphStore
+    purpose=ODYSSEY_QUESTION_PURPOSE,
+    questions_per_chunk=8,
+)
+if not rag.is_indexed():
+    rag.index(OdysseyCorpus(path, books=1))
+rag.query("Why is Neptune angry with Ulysses?")  # RagAnswer
+
+HypotheticalQuestionGenerator(llm, purpose=...).generate(chunk)
+# -> ["What caused Ulysses' men to perish?", ...]
+""",
+        command=(
+            ".venv/Scripts/python examples/benchmark_text_recipes_odyssey.py "
+            "--variants hypothetical_questions"
+        ),
+    ),
+    TableSlide(
+        title="Benchmark: the text recipes on Odyssey Book I",
+        subtitle=(
+            "`benchmark_text_recipes_odyssey.py`: 20 questions with written answers "
+            "(13 specific, 7 broad), gpt-4o answers and judges, k=4"
+        ),
+        header=(
+            "Variant",
+            "Correct",
+            "Specific",
+            "Broad",
+            "Recall",
+            "Faithful",
+            "Latency",
+            "Tokens/q",
+            "Index cost",
+        ),
+        widths=(2.9, 1.1, 1.1, 1.0, 1.0, 1.1, 1.1, 1.1, 1.9),
+        font_size=11.5,
+        rows=(
+            (
+                "VectorRag vector",
+                "0.651",
+                "0.679",
+                "0.601",
+                "0.657",
+                "0.947",
+                "1.9s",
+                "713",
+                "embeddings",
+            ),
+            (
+                "VectorRag hybrid",
+                "0.645",
+                "0.702",
+                "0.540",
+                "0.608",
+                "0.947",
+                "2.1s",
+                "717",
+                "embeddings",
+            ),
+            (
+                "ParentChildRag",
+                "0.785",
+                "0.793",
+                "0.769",
+                "0.806",
+                "0.978",
+                "2.0s",
+                "2.2k",
+                "embeddings",
+            ),
+            (
+                "ParentChildRag + step-back",
+                "0.749",
+                "0.792",
+                "0.669",
+                "0.915",
+                "0.988",
+                "3.0s",
+                "2.4k",
+                "embeddings",
+            ),
+            (
+                "HypotheticalQuestionRag",
+                "0.733",
+                "0.747",
+                "0.707",
+                "0.871",
+                "1.000",
+                "2.2s",
+                "2.2k",
+                "11 LLM calls",
+            ),
+            (
+                "GraphRag local",
+                "0.616",
+                "0.622",
+                "0.606",
+                "0.821",
+                "0.920",
+                "4.7s",
+                "2.3k",
+                "~80 LLM calls",
+            ),
+            (
+                "GraphRag global",
+                "0.475",
+                "0.442",
+                "0.536",
+                "0.323",
+                "0.628",
+                "11.3s",
+                "7.5k",
+                "~80 LLM calls",
+            ),
+        ),
+        caption=(
+            "One run, 20 questions: gaps under ~0.05 are noise. VectorRag gets 4×500-char chunks, "
+            "the parent-based recipes 4×2000, so context size is part of their lead."
+        ),
+    ),
+    BulletSlide(
+        title="What the benchmark says",
+        subtitle="Findings on one book; broad questions favour GraphRag more as the corpus grows",
+        bullets=(
+            "ParentChildRag is the best default: highest correctness overall and on both question types, at vector-search cost",
+            "Step-back raises context recall (0.92) but costs one LLM call and lowers broad-question correctness",
+            "  The broader rewrite pulls in more of the right facts, but the answer then spreads over them",
+            "Hypothetical questions: perfect faithfulness and high recall, a close second, for one LLM call per chunk at index time",
+            "Hybrid didn't beat plain vector here (0.645 vs 0.651): keyword matches added nothing on this corpus",
+            "GraphRag lost on a single book. Four 2000-char parents already cover ~37% of it",
+            "  Global answers were long and drew on the model's own Odyssey knowledge (0.63 faithful)",
+            "  Its advantage needs a corpus too big for any top-k of chunks to summarize",
+        ),
+    ),
+    TableSlide(
+        title="Choosing a recipe",
+        subtitle="Pick by the shape of your data first, then by cost and quality",
+        header=("Your data", "Go-to recipe", "Why"),
+        widths=(2.6, 3.2, 6.5),
+        font_size=12.5,
+        rows=(
+            (
+                "Unstructured text (PDF, documents)",
+                "ParentChildRag",
+                "Won the benchmark (0.785 correct) at 2s and 2 LLM calls; indexing only embeds",
+            ),
+            (
+                "Text with predictable questions",
+                "HypotheticalQuestionRag",
+                "A `purpose` aims the index at what users ask; 1.000 faithful, 0.871 recall",
+            ),
+            (
+                "Large corpus, whole-corpus questions",
+                "GraphRag global_search",
+                "No top-k of chunks can summarize it; budget ~80 LLM calls per book to index",
+            ),
+            (
+                "Already-structured graph",
+                "Text2CypherQA",
+                "Exact counts, filters and aggregations, which vector search can't do",
+            ),
+            (
+                "Several sources, open questions",
+                "AgenticRag over tools",
+                "Routes to text2cypher or a RetrieverTool, handles off-topic; 0.88 correct on movies",
+            ),
+        ),
+        caption=(
+            "StructuredGraphExtraction builds a graph for Text2CypherQA or AgenticRag to query; "
+            "RagEvaluation scores any of them."
+        ),
+    ),
+    TableSlide(
+        title="Each recipe, one by one",
+        subtitle="When to reach for it, and what it costs",
+        header=("Recipe", "Use when", "Watch out for"),
+        widths=(2.8, 5.0, 4.5),
+        font_size=11.5,
+        rows=(
+            (
+                "VectorRag",
+                "A baseline or prototype; hybrid when questions hold exact codes or rare terms",
+                "Small chunks lose context: 0.651 correct, the lowest of the chunk recipes",
+            ),
+            (
+                "ParentChildRag",
+                "The default for questions over long documents",
+                "`step_back=True` adds recall but an LLM call; worth it for narrow, oddly worded questions",
+            ),
+            (
+                "HypotheticalQuestionRag",
+                "Users' questions follow a known pattern (FAQ, study, support); state it as `purpose`",
+                "One LLM call per chunk to index; facts the questions skip can't be found",
+            ),
+            (
+                "GraphRag",
+                "Broad questions over a large corpus (global); entity-centred ones (local)",
+                "~80 LLM calls per book to index; on one book it lost to chunk retrieval on every metric",
+            ),
+            (
+                "Text2CypherQA",
+                "Factual or aggregate questions over a graph you already have",
+                "Brittle alone: bad Cypher returns empty rows; no small talk or off-topic handling",
+            ),
+            (
+                "AgenticRag",
+                "The front door over several tools, in production",
+                "Several LLM calls per question; `decompose=True` only for multi-part questions",
+            ),
+        ),
     ),
     CodeSlide(
         title="Kuzu under the hood",

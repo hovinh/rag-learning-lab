@@ -1,10 +1,12 @@
+import json
+
 import pytest
 
 from graphrag.graph.kuzu_parent_child_store import KuzuParentChildGraphStore
 from graphrag.graph.kuzu_store import KuzuGraphStore
 from graphrag.ingestion.chunker import TextChunker
 from graphrag.ingestion.sources import DocumentSource
-from graphrag.recipes import ParentChildRag, RagAnswer, VectorRag
+from graphrag.recipes import HypotheticalQuestionRag, ParentChildRag, RagAnswer, VectorRag
 
 
 class ListSource(DocumentSource):
@@ -99,3 +101,37 @@ def test_parent_child_rag_matches_children_and_answers_from_parents(
     # The step-back question is only used to retrieve.
     assert llm.complete_calls[0]["messages"][1]["content"] == "specific question"
     assert "specific question" in llm.stream_calls[0]["messages"][1]["content"]
+
+
+def test_hypothetical_question_rag_matches_generated_questions_and_answers_from_chunks(
+    parent_child_store, embedder, llm
+):
+    embedder.vectors = {
+        "Who worked in Bern?": [1.0, 0.0, 0.0],
+        "Where did Einstein move?": [0.0, 1.0, 0.0],
+        "Where did Einstein go later?": [0.0, 0.9, 0.1],
+    }
+    llm.completions = [
+        json.dumps({"questions": ["Who worked in Bern?"]}),
+        json.dumps({"questions": ["Where did Einstein move?"]}),
+    ]
+    llm.streamed = ["Princeton."]
+    rag = HypotheticalQuestionRag(
+        parent_child_store,
+        embedder,
+        llm,
+        purpose="Biography questions",
+        questions_per_chunk=1,
+        chunker=TextChunker(1000, 0),
+        k=1,
+    )
+
+    assert not rag.is_indexed()
+    rag.index(ListSource(BERN, PRINCETON))
+    assert rag.is_indexed()
+    answer = rag.query("Where did Einstein go later?")
+
+    # Only the questions are embedded; the chunk is what the LLM gets.
+    assert BERN not in [text for call in embedder.calls for text in call]
+    assert "Biography questions" in llm.complete_calls[0]["messages"][0]["content"]
+    assert answer == RagAnswer("Where did Einstein go later?", "Princeton.", [PRINCETON])

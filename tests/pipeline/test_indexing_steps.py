@@ -4,6 +4,7 @@ from graphrag.ingestion.models import Chunk
 from graphrag.pipeline.steps.indexing import (
     EmbedChildrenStep,
     EmbedChunksStep,
+    GenerateQuestionsStep,
     StoreChunksStep,
     StoreParentChildStep,
 )
@@ -56,4 +57,21 @@ def test_embed_only_children_then_store_hierarchy(embedder):
             [["a", "b"], ["c"]],
             [[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], [[0.0, 0.0, 1.0]]],
         )
+    ]
+
+
+class CannedQuestions:
+    def generate(self, chunk):
+        return [f"What does {chunk} say?", f"Why {chunk}?"]
+
+
+def test_generate_questions_makes_each_chunk_a_parent_of_its_questions():
+    context = IndexContext(chunks=[Chunk(0, 0, "aaa"), Chunk(0, 1, "bbb")])
+
+    GenerateQuestionsStep(CannedQuestions())(context)
+
+    assert context.parents == ["aaa", "bbb"]
+    assert context.children_per_parent == [
+        ["What does aaa say?", "Why aaa?"],
+        ["What does bbb say?", "Why bbb?"],
     ]

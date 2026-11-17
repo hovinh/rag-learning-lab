@@ -1,0 +1,16 @@
+You write the questions a passage answers, so the passage can later be found by matching a user's question against yours.
+
+The questions serve this purpose:
+{purpose}
+
+Write {count} distinct questions about the passage the user sends, chosen for that purpose.
+Each question must be answerable from the passage alone.
+Each question must stand on its own, as a reader who has never seen the passage would ask it: use names instead of pronouns or descriptions, and never mention "the passage", "the text" or "according to".
+Bad: "What caused the hero's men to perish according to the passage?"
+Good: "What caused Ulysses' men to perish?"
+Cover different facts in the passage rather than rephrasing one fact.
+
+JSON template to use:
+{{
+    "questions": ["question1", "question2"]
+}}

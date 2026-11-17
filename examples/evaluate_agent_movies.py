@@ -77,7 +77,7 @@ def main(
                         seeder.seed()
                 rag = build_movie_agent(llm, store, decompose=decompose, model=DEFAULT_ANSWER_MODEL)
                 with trace.section(f"Answer {len(cases)} benchmark questions"):
-                    samples = evaluation.answer(store, cases, rag.query)
+                    samples = evaluation.answer(cases, rag.query, store=store)
             samples_path = LOG_DIR / f"{process_name}_samples.json"
             save_samples(samples, samples_path)
             trace.field("samples", f"written to {samples_path}")
