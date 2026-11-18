@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GraphRAG Building Blocks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Fredoka:wght@500;600;700&family=Nunito:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #fff6e8; --panel: #ffffff; --line: #ead9c0; --ink: #2b2118; --muted: #7a6a58;
+  --accent: #ef6a2a; --bad: #d64545; --good: #1f9d6b; --bar: #e3d3bb;
+  --c-store: #3b7be0; --c-ingest: #e8a317; --c-llm: #8b5cf6; --c-retr: #17a673; --c-pipe: #e0518f; --c-agent: #e04848; --c-off: #a8998a;
+  --head: "Fredoka", system-ui, sans-serif; --body: "Nunito", system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, monospace;
+  --ease: cubic-bezier(.34,1.56,.64,1);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); overflow: hidden; }
+
+/* ---------- stage: fixed 1080 square, scaled to fit ---------- */
+#viewport { position: fixed; inset: 0 0 64px 0; display: grid; place-items: center; }
+body.record #viewport { inset: 0; }
+#stage { position: relative; width: 1080px; height: 1080px; flex: none; transform-origin: center; background: var(--bg); overflow: hidden; }
+#stage::before { content: ""; position: absolute; inset: 0; background-image: radial-gradient(var(--line) 3px, transparent 3.5px); background-size: 40px 40px; opacity: .6; }
+.scene { position: absolute; inset: 0; padding: 84px 72px 96px; display: flex; flex-direction: column; gap: 30px; visibility: hidden; }
+.scene.active { visibility: visible; }
+
+/* ---------- type ---------- */
+.kicker { font-family: var(--head); font-weight: 600; font-size: 24px; color: var(--accent); }
+h1 { font-family: var(--head); font-weight: 700; font-size: 66px; line-height: 1.08; }
+h2 { font-family: var(--head); font-weight: 700; font-size: 52px; line-height: 1.1; }
+.sub { font-size: 28px; color: var(--muted); line-height: 1.35; }
+.em { color: var(--accent); }
+.mono { font-family: var(--mono); }
+.foot { margin-top: auto; font-size: 22px; color: var(--muted); line-height: 1.4; }
+
+/* ---------- animation engine ---------- */
+.a { opacity: 0; }
+.scene.active .a { animation: var(--k, up) var(--t, .7s) var(--ease) calc(var(--d, 0) * 1s) both; }
+@keyframes up   { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: none; } }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pop  { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
+@keyframes drop { from { opacity: 0; transform: translateY(-160px); } to { opacity: 1; transform: none; } }
+@keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes strike { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.scene.active .pulse { animation: pulse 1.6s ease-in-out calc(var(--d, 0) * 1s) infinite; }
+@keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 transparent; } 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--bad) 30%, transparent); } }
+
+/* still mode: a scene's final frame without motion (screenshots, PDF carousel) */
+body.still .scene.active .a, body.still .scene.active .row .bar, body.still .scene.active .strike::after { animation: none !important; opacity: 1; transform: none; }
+body.still .pulse { animation: none !important; }
+body.still #prog { display: none; }
+
+/* ---------- bricks ---------- */
+.c-store { --c: var(--c-store); } .c-ingest { --c: var(--c-ingest); } .c-llm { --c: var(--c-llm); }
+.c-retr { --c: var(--c-retr); } .c-pipe { --c: var(--c-pipe); } .c-agent { --c: var(--c-agent); } .c-off { --c: var(--c-off); }
+.brick { position: relative; background: var(--c); border-radius: 12px; margin-top: 14px; padding: 16px 18px; color: #fff;
+  box-shadow: 0 7px 0 color-mix(in srgb, var(--c) 60%, #000); }
+.brick::before, .brick::after { content: ""; position: absolute; top: -12px; width: 34px; height: 14px; border-radius: 8px 8px 0 0; background: color-mix(in srgb, var(--c) 85%, #fff); }
+.brick::before { left: 22%; } .brick::after { right: 22%; }
+.brick b { display: block; font-family: var(--head); font-weight: 700; font-size: 25px; }
+.brick span { display: block; margin-top: 4px; font-size: 19px; font-weight: 700; color: rgba(255,255,255,.9); line-height: 1.3; }
+.brick i { position: absolute; top: 12px; right: 14px; font-style: normal; font-family: var(--head); font-size: 13px; color: rgba(255,255,255,.78); text-transform: uppercase; letter-spacing: .08em; }
+
+/* lanes of pipeline steps */
+.lane { display: flex; align-items: center; gap: 12px; }
+.lane > .lbl { width: 150px; flex: none; font-family: var(--mono); font-size: 20px; color: var(--muted); }
+.lane .brick { flex: 1; min-width: 0; padding: 14px 8px; text-align: center; }
+.lane .brick b { font-size: 19px; line-height: 1.22; }
+.lane .brick span { font-size: 15px; margin-top: 2px; }
+.lane .sep { color: var(--muted); font-size: 24px; flex: none; font-weight: 800; }
+.lane.fixed .brick { flex: 0 0 210px; }
+.lanes { display: flex; flex-direction: column; gap: 8px; }
+
+/* small chips */
+.chips { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.chip { font-family: var(--mono); font-size: 18px; font-weight: 600; padding: 8px 13px 8px 11px; border-radius: 12px; border: 3px solid var(--line); background: var(--panel); display: inline-flex; align-items: center; gap: 8px; }
+.chip::before { content: ""; width: 12px; height: 12px; border-radius: 3px; background: var(--c, var(--line)); }
+.chips .lbl { font-size: 20px; color: var(--muted); font-weight: 700; margin-right: 4px; }
+
+.card { background: var(--panel); border: 3px solid var(--line); border-radius: 16px; padding: 20px 24px; box-shadow: 0 7px 0 var(--line); }
+
+/* ---------- 1 · hook ---------- */
+#s1 { justify-content: center; gap: 38px; }
+.pile { display: flex; gap: 14px; align-items: flex-end; height: 120px; }
+.pile .brick { width: 120px; height: 56px; padding: 0; }
+.pile .brick:nth-child(2n) { height: 80px; } .pile .brick:nth-child(3n) { height: 104px; }
+
+/* ---------- 2 · the book ---------- */
+.chapters { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; }
+.chapter { display: flex; gap: 14px; align-items: baseline; font-size: 25px; font-weight: 700; }
+.chapter .n { font-family: var(--head); color: var(--accent); min-width: 56px; }
+.cell { background: var(--panel); border: 3px solid var(--line); border-radius: 16px; padding: 18px 24px; font-family: var(--mono); font-size: 20px; line-height: 1.7; color: var(--muted); box-shadow: 0 7px 0 var(--line); position: relative; }
+.cell .tag { position: absolute; top: -15px; left: 18px; background: var(--bg); padding: 0 8px; font-size: 16px; color: var(--ink); }
+.cell .g { color: var(--bad); font-weight: 600; border-radius: 4px; padding: 0 3px; }
+.cell .k { color: var(--accent); }
+.cons { display: flex; gap: 14px; }
+.con { font-size: 24px; font-weight: 800; padding: 8px 18px; border-radius: 999px; border: 3px solid var(--bad); color: var(--bad); }
+
+/* ---------- 3 · adapted ---------- */
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px 16px; }
+.grid4 .brick { padding: 26px 14px 22px; min-height: 130px; }
+.grid4 .brick b { font-size: 23px; }
+.grid4 .brick span { font-size: 17px; }
+.swap { display: flex; align-items: center; gap: 22px; }
+.swap .old { position: relative; font-family: var(--head); font-weight: 700; font-size: 30px; color: var(--c-off); padding: 16px 24px; border: 3px dashed var(--c-off); border-radius: 14px; }
+.swap .old small { display: block; font-family: var(--body); font-size: 17px; }
+.strike::after { content: ""; position: absolute; left: 10px; right: 10px; top: 50%; height: 4px; background: var(--bad); border-radius: 2px; transform-origin: left; }
+.scene.active .strike::after { animation: strike .5s ease-out calc(var(--sd) * 1s) both; }
+.swap .arrow { font-size: 40px; color: var(--muted); font-weight: 800; }
+.swap .brick { margin-top: 14px; flex: 1; }
+.swap .brick b { font-size: 28px; }
+
+/* ---------- recipe pages ---------- */
+.rhead { display: flex; align-items: baseline; gap: 18px; }
+.rname { font-family: var(--mono); font-weight: 600; font-size: 60px; color: var(--accent); letter-spacing: -.02em; }
+.rch { font-family: var(--head); font-weight: 600; font-size: 26px; color: var(--muted); }
+.tagline { font-family: var(--head); font-weight: 600; font-size: 38px; line-height: 1.18; margin-top: -14px; }
+.when { font-size: 25px; line-height: 1.4; }
+.when b { font-family: var(--head); color: var(--accent); display: block; font-size: 22px; margin-bottom: 4px; }
+.loopnote { font-family: var(--head); font-weight: 600; font-size: 21px; color: var(--muted); padding-left: 162px; }
+
+/* ---------- 8 · and more ---------- */
+.more { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.more .card { display: flex; flex-direction: column; gap: 10px; }
+.more .card .t { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.more .card { min-height: 250px; gap: 14px; padding: 26px 26px; }
+.more .card .t b { font-family: var(--mono); font-size: 23px; }
+.more .card .t span { font-family: var(--head); font-weight: 600; color: var(--muted); font-size: 19px; }
+.more .card p { font-size: 24px; line-height: 1.38; color: var(--ink); }
+.more .card .chips { margin-top: auto; }
+.more .card .chip { font-size: 16px; padding: 6px 11px 6px 9px; border-width: 2px; }
+
+/* ---------- 9 · benchmark ---------- */
+.chart { display: flex; flex-direction: column; gap: 12px; }
+.row { display: grid; grid-template-columns: 330px 1fr 70px; align-items: center; gap: 16px; cursor: default; }
+.row .name { font-family: var(--mono); font-size: 18px; text-align: right; line-height: 1.2; }
+.row .name small { display: block; color: var(--muted); font-size: 15px; }
+.row .track { position: relative; height: 34px; }
+.row .bar { position: absolute; left: 0; top: 0; bottom: 0; width: calc(var(--v) * 100%); background: var(--bar); border-radius: 0 4px 4px 0; transform-origin: left; }
+.row.win .bar { background: var(--accent); }
+.row .val { font-family: var(--mono); font-size: 20px; color: var(--muted); }
+.row.win .val, .row.win .name { font-weight: 600; color: var(--ink); }
+.row:hover .bar { filter: brightness(1.06); }
+.scene.active .row .bar { animation: grow .9s var(--ease) calc(var(--d) * 1s) both; }
+.axis { display: grid; grid-template-columns: 330px 1fr 70px; gap: 16px; font-family: var(--mono); font-size: 15px; color: var(--muted); }
+.axis div:nth-child(2) { display: flex; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 6px; }
+.callout { background: var(--panel); border: 3px solid var(--accent); border-radius: 16px; padding: 18px 22px; font-size: 24px; line-height: 1.4; box-shadow: 0 7px 0 var(--line); }
+#tip { position: fixed; pointer-events: none; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font: 14px/1.5 var(--mono); opacity: 0; transition: opacity .12s; z-index: 20; white-space: pre; }
+
+/* ---------- 10 · close ---------- */
+#s10 { gap: 30px; }
+.pick { display: grid; grid-template-columns: 1fr auto; gap: 0; }
+.pick div { padding: 13px 0; border-bottom: 2px dashed var(--line); font-size: 25px; }
+.pick div:nth-child(2n) { font-family: var(--mono); font-weight: 600; font-size: 22px; color: var(--accent); text-align: right; padding-left: 20px; }
+.cta { font-family: var(--head); font-size: 34px; font-weight: 700; padding: 18px 28px; border-radius: 999px; background: var(--accent); color: #fff; align-self: flex-start; box-shadow: 0 7px 0 color-mix(in srgb, var(--accent) 60%, #000); }
+
+/* ---------- progress (inside the stage, recorded) ---------- */
+#prog { position: absolute; left: 72px; right: 72px; bottom: 40px; display: flex; gap: 8px; z-index: 5; }
+#prog div { flex: 1; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+#prog div span { display: block; height: 100%; width: 0; background: var(--accent); }
+
+/* ---------- controls (never recorded) ---------- */
+#controls { position: fixed; left: 0; right: 0; bottom: 0; height: 64px; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 0 16px; font: 14px/1 var(--body); }
+body.record #controls { display: none; }
+#controls button { font: inherit; font-weight: 700; color: var(--ink); background: var(--panel); border: 2px solid var(--line); border-radius: 10px; padding: 9px 13px; cursor: pointer; min-width: 42px; }
+#controls span { color: var(--muted); min-width: 56px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="viewport"><div id="stage">
+
+  <!-- 1 · hook -->
+  <section class="scene" id="s1">
+    <div class="kicker a">rag-learning-lab</div>
+    <h1 class="a" style="--d:.3">I took a GraphRAG book apart.<br>Then rebuilt it <span class="em">as bricks.</span></h1>
+    <div class="sub a" style="--d:1.1"><i>Essential GraphRAG</i>: 7 notebooks → one Python package</div>
+    <div class="pile">
+      <div class="brick c-ingest a" style="--k:drop;--d:1.6"></div>
+      <div class="brick c-retr a" style="--k:drop;--d:1.75"></div>
+      <div class="brick c-llm a" style="--k:drop;--d:1.9"></div>
+      <div class="brick c-store a" style="--k:drop;--d:2.05"></div>
+      <div class="brick c-pipe a" style="--k:drop;--d:2.2"></div>
+      <div class="brick c-agent a" style="--k:drop;--d:2.35"></div>
+    </div>
+  </section>
+
+  <!-- 2 · the book -->
+  <section class="scene" id="s2">
+    <div class="kicker a">the book</div>
+    <h2 class="a" style="--d:.2">7 chapters of GraphRAG,<br>taught in notebooks.</h2>
+    <div class="chapters">
+      <div class="chapter a" style="--d:.8"><span class="n">ch02</span>PDFs, vector &amp; hybrid search</div>
+      <div class="chapter a" style="--d:.95"><span class="n">ch03</span>Step-back, parent-child chunks</div>
+      <div class="chapter a" style="--d:1.1"><span class="n">ch04</span>Text → Cypher queries</div>
+      <div class="chapter a" style="--d:1.25"><span class="n">ch05</span>Agents that pick tools</div>
+      <div class="chapter a" style="--d:1.4"><span class="n">ch06</span>Extracting a knowledge graph</div>
+      <div class="chapter a" style="--d:1.55"><span class="n">ch07</span>Microsoft-style GraphRAG</div>
+      <div class="chapter a" style="--d:1.7"><span class="n">ch08</span>Evaluating the answers</div>
+    </div>
+    <div class="cell a" style="--d:2.5"><span class="tag">every notebook</span>
+      <span class="k">from</span> utils <span class="k">import</span> <span class="g pulse" style="--d:3.4">chat</span>, <span class="g pulse" style="--d:3.6">embed</span>, <span class="g pulse" style="--d:3.8">neo4j_driver</span><br>
+      response = <span class="g">chat</span>(messages)   <span style="opacity:.7"># one shared global each</span>
+    </div>
+    <div class="cons">
+      <div class="con a" style="--k:pop;--d:4.2">✕ hard to reuse</div>
+      <div class="con a" style="--k:pop;--d:4.45">✕ hard to swap</div>
+      <div class="con a" style="--k:pop;--d:4.7">✕ hard to test</div>
+    </div>
+  </section>
+
+  <!-- 3 · what I adapted -->
+  <section class="scene" id="s3">
+    <div class="kicker a">what I adapted</div>
+    <h2 class="a" style="--d:.2">Every job became a brick.</h2>
+    <div class="grid4">
+      <div class="brick c-store a" style="--k:pop;--d:.8"><b>GraphStore</b><span>Cypher, vector + keyword search</span></div>
+      <div class="brick c-ingest a" style="--k:pop;--d:.95"><b>TextChunker</b><span>text → chunks</span></div>
+      <div class="brick c-retr a" style="--k:pop;--d:1.1"><b>Embedder</b><span>text → vectors</span></div>
+      <div class="brick c-retr a" style="--k:pop;--d:1.25"><b>Retriever</b><span>find the right chunks</span></div>
+      <div class="brick c-llm a" style="--k:pop;--d:1.4"><b>LLMClient</b><span>chat, tools, JSON</span></div>
+      <div class="brick c-llm a" style="--k:pop;--d:1.55"><b>Text2Cypher</b><span>question → Cypher</span></div>
+      <div class="brick c-pipe a" style="--k:pop;--d:1.7"><b>Pipeline</b><span>steps in order</span></div>
+      <div class="brick c-agent a" style="--k:pop;--d:1.85"><b>Agent</b><span>route, critique, retry</span></div>
+    </div>
+    <div class="sub a" style="--d:2.8;font-size:26px">…and the database brick got swapped:</div>
+    <div class="swap">
+      <div class="old strike a" style="--d:3.2;--sd:4"><span>Neo4j</span><small>a server to run, a driver, credentials</small></div>
+      <div class="arrow a" style="--d:4.4">→</div>
+      <div class="brick c-store a" style="--k:pop;--d:4.7"><b>KuzuGraphStore</b><span>embedded · same Cypher · just a folder</span></div>
+    </div>
+    <div class="foot a" style="--d:5.6">Each brick works alone, so each one is easy to test and easy to swap.</div>
+  </section>
+
+  <!-- 4 · VectorRag -->
+  <section class="scene" id="s4">
+    <div class="kicker a">recipe 1 of 4</div>
+    <div class="rhead a" style="--d:.2"><span class="rname">VectorRag</span><span class="rch">ch02</span></div>
+    <div class="tagline a" style="--d:.5">The classic: chunk it, embed it,<br>fetch the closest chunks.</div>
+    <div class="lanes">
+      <div class="lane"><div class="lbl a" style="--d:1">index()</div>
+        <div class="brick c-ingest a" style="--k:drop;--d:1.2"><b>Load<br>Documents</b></div><span class="sep a" style="--d:1.3">›</span>
+        <div class="brick c-ingest a" style="--k:drop;--d:1.45"><b>Chunk</b></div><span class="sep a" style="--d:1.55">›</span>
+        <div class="brick c-retr a" style="--k:drop;--d:1.7"><b>Embed<br>Chunks</b></div><span class="sep a" style="--d:1.8">›</span>
+        <div class="brick c-store a" style="--k:drop;--d:1.95"><b>Store<br>Chunks</b></div>
+      </div>
+      <div class="lane fixed"><div class="lbl a" style="--d:2.4">query()</div>
+        <div class="brick c-retr a" style="--k:drop;--d:2.6"><b>Retrieve</b><span>vector or hybrid</span></div><span class="sep a" style="--d:2.7">›</span>
+        <div class="brick c-llm a" style="--k:drop;--d:2.85"><b>Answer</b></div>
+      </div>
+    </div>
+    <div class="when a" style="--d:3.6"><b>Reach for it when…</b>you need a quick baseline over plain text, so you have something to measure the others against.</div>
+    <div class="chips a" style="--d:4.4;margin-top:auto"><span class="lbl">Built from</span>
+      <span class="chip c-ingest">TextChunker</span><span class="chip c-retr">Embedder</span><span class="chip c-retr">Retriever</span><span class="chip c-llm">LLMClient</span><span class="chip c-store">GraphStore</span></div>
+  </section>
+
+  <!-- 5 · ParentChildRag -->
+  <section class="scene" id="s5">
+    <div class="kicker a">recipe 2 of 4</div>
+    <div class="rhead a" style="--d:.2"><span class="rname">ParentChildRag</span><span class="rch">ch03</span></div>
+    <div class="tagline a" style="--d:.5">Match small chunks,<br>answer from their big parents.</div>
+    <div class="lanes">
+      <div class="lane"><div class="lbl a" style="--d:1">index()</div>
+        <div class="brick c-ingest a" style="--k:drop;--d:1.2"><b>Load<br>Documents</b></div><span class="sep a" style="--d:1.3">›</span>
+        <div class="brick c-ingest a" style="--k:drop;--d:1.4"><b>Split<br>Sections</b></div><span class="sep a" style="--d:1.5">›</span>
+        <div class="brick c-ingest a" style="--k:drop;--d:1.6"><b>ParentChild<br>Chunk</b></div><span class="sep a" style="--d:1.7">›</span>
+        <div class="brick c-retr a" style="--k:drop;--d:1.8"><b>Embed<br>Children</b></div><span class="sep a" style="--d:1.9">›</span>
+        <div class="brick c-store a" style="--k:drop;--d:2.0"><b>Store<br>ParentChild</b></div>
+      </div>
+      <div class="lane fixed"><div class="lbl a" style="--d:2.4">query()</div>
+        <div class="brick c-retr a" style="--k:drop;--d:2.6"><b>Retrieve</b><span>+ optional step-back</span></div><span class="sep a" style="--d:2.7">›</span>
+        <div class="brick c-llm a" style="--k:drop;--d:2.85"><b>Answer</b></div>
+      </div>
+    </div>
+    <div class="when a" style="--d:3.6"><b>Reach for it when…</b>you have unstructured text. Small chunks match precisely; their parents give the LLM enough context to answer.</div>
+    <div class="chips a" style="--d:4.4;margin-top:auto"><span class="lbl">Built from</span>
+      <span class="chip c-ingest">TextChunker ×2</span><span class="chip c-retr">Embedder</span><span class="chip c-retr">Retriever</span><span class="chip c-llm">LLMClient</span><span class="chip c-store">GraphStore</span><span class="chip c-llm">QueryRewriter</span></div>
+  </section>
+
+  <!-- 6 · AgenticRag -->
+  <section class="scene" id="s6">
+    <div class="kicker a">recipe 3 of 4</div>
+    <div class="rhead a" style="--d:.2"><span class="rname">AgenticRag</span><span class="rch">ch05</span></div>
+    <div class="tagline a" style="--d:.5">An agent picks the right tool,<br>then checks its own answer.</div>
+    <div class="lanes">
+      <div class="lane"><div class="lbl a" style="--d:1">query()</div>
+        <div class="brick c-agent a" style="--k:drop;--d:1.2"><b>Rewrite</b><span>QueryUpdater</span></div><span class="sep a" style="--d:1.3">›</span>
+        <div class="brick c-agent a" style="--k:drop;--d:1.45"><b>Route</b><span>ToolRouter</span></div><span class="sep a" style="--d:1.55">›</span>
+        <div class="brick c-agent a" style="--k:drop;--d:1.7"><b>Critique</b><span>AnswerCritic</span></div><span class="sep a" style="--d:1.8">›</span>
+        <div class="brick c-llm a" style="--k:drop;--d:1.95"><b>Answer</b></div>
+      </div>
+      <div class="loopnote a" style="--d:2.4">↺ the critic finds a gap → one more round of tools</div>
+      <div class="lane"><div class="lbl a" style="--d:2.9">tools</div>
+        <div class="brick c-llm a" style="--k:pop;--d:3.1"><b>Text2Cypher<br>Tool</b></div>
+        <div class="brick c-retr a" style="--k:pop;--d:3.3"><b>Retriever<br>Tool</b></div>
+        <div class="brick c-store a" style="--k:pop;--d:3.5"><b>fixed Cypher<br>tools</b></div>
+        <div class="brick c-off a" style="--k:pop;--d:3.7"><b>your<br>Tool</b></div>
+      </div>
+    </div>
+    <div class="when a" style="--d:4.4"><b>The reuse moment</b>RetrieverTool wraps any Retriever, so the other recipes' bricks plug straight in as tools.</div>
+    <div class="chips a" style="--d:5;margin-top:auto"><span class="lbl">Built from</span>
+      <span class="chip c-agent">Agent</span><span class="chip c-llm">LLMClient</span><span class="chip c-retr">Retriever</span><span class="chip c-llm">Text2Cypher</span><span class="chip c-store">GraphStore</span></div>
+  </section>
+
+  <!-- 7 · GraphRag -->
+  <section class="scene" id="s7">
+    <div class="kicker a">recipe 4 of 4</div>
+    <div class="rhead a" style="--d:.2"><span class="rname">GraphRag</span><span class="rch">ch07</span></div>
+    <div class="tagline a" style="--d:.5">The LLM builds a knowledge graph,<br>then summarizes its communities.</div>
+    <div class="lanes">
+      <div class="lane"><div class="lbl a" style="--d:1">index()</div>
+        <div class="brick c-ingest a" style="--k:drop;--d:1.2"><b>Load +<br>Chunk</b></div><span class="sep a" style="--d:1.3">›</span>
+        <div class="brick c-llm a" style="--k:drop;--d:1.4"><b>Extract<br>EntityGraph</b></div><span class="sep a" style="--d:1.5">›</span>
+        <div class="brick c-llm a" style="--k:drop;--d:1.6"><b>Summarize<br>Descriptions</b></div>
+      </div>
+      <div class="lane"><div class="lbl a" style="--d:1.8"></div>
+        <div class="brick c-store a" style="--k:drop;--d:1.9"><b>Detect<br>Communities</b><span>Louvain</span></div><span class="sep a" style="--d:2">›</span>
+        <div class="brick c-llm a" style="--k:drop;--d:2.1"><b>Report<br>Communities</b></div><span class="sep a" style="--d:2.2">›</span>
+        <div class="brick c-retr a" style="--k:drop;--d:2.3"><b>Index<br>Entities</b></div>
+      </div>
+      <div class="lane"><div class="lbl a" style="--d:2.7">query</div>
+        <div class="brick c-llm a" style="--k:drop;--d:2.9"><b>global_search</b><span>map-reduce over reports</span></div>
+        <div class="brick c-retr a" style="--k:drop;--d:3.1"><b>local_search</b><span>entities + neighbours</span></div>
+      </div>
+    </div>
+    <div class="when a" style="--d:3.9"><b>Reach for it when…</b>the corpus is big and the questions are about all of it. Indexing is expensive: about 100k tokens per book.</div>
+    <div class="foot a" style="--d:4.8;margin-top:auto;font-family:var(--head);font-weight:600;color:var(--accent);font-size:26px">The famous one. Did it win? Keep swiping →</div>
+  </section>
+
+  <!-- 8 · and 4 more -->
+  <section class="scene" id="s8">
+    <div class="kicker a">same bricks, more recipes</div>
+    <h2 class="a" style="--d:.2">And 4 more,<br>from the same bricks.</h2>
+    <div class="more">
+      <div class="card a" style="--k:pop;--d:.9"><div class="t"><b>Text2CypherQA</b><span>ch04</span></div>
+        <p>Question → Cypher → rows, for data that's already a graph.</p>
+        <div class="chips"><span class="chip c-llm">Text2Cypher</span><span class="chip c-store">GraphStore</span></div></div>
+      <div class="card a" style="--k:pop;--d:1.2"><div class="t"><b>StructuredGraphExtraction</b><span>ch06</span></div>
+        <p>Documents → typed models → a graph you can query.</p>
+        <div class="chips"><span class="chip c-llm">LLMClient</span><span class="chip c-store">GraphStore</span></div></div>
+      <div class="card a" style="--k:pop;--d:1.5"><div class="t"><b>HypotheticalQuestionRag</b><span>extra</span></div>
+        <p>Embed the questions each chunk answers, not the chunk.</p>
+        <div class="chips"><span class="chip c-llm">LLMClient</span><span class="chip c-retr">Embedder</span><span class="chip c-retr">Retriever</span></div></div>
+      <div class="card a" style="--k:pop;--d:1.8"><div class="t"><b>RagEvaluation</b><span>ch08</span></div>
+        <p>Scores any recipe: correctness, context recall, faithfulness.</p>
+        <div class="chips"><span class="chip c-llm">LLMClient</span><span class="chip c-pipe">any recipe</span></div></div>
+    </div>
+    <div class="foot a" style="--d:2.8">Every recipe returns the same answer type, so RagEvaluation can score any of them, and the next page does exactly that.</div>
+  </section>
+
+  <!-- 9 · benchmark -->
+  <section class="scene" id="s9" style="gap:24px">
+    <div class="kicker a">the benchmark</div>
+    <h2 class="a" style="--d:.2">Then I made the<br>recipes compete.</h2>
+    <div class="sub a" style="--d:.6;font-size:23px">Answer correctness (0–1) · <i>The Odyssey</i>, Book I · 20 questions · gpt-4o</div>
+    <div class="chart" id="chart"></div>
+    <div class="axis a" style="--d:1"><div></div><div><span>0</span><span>0.5</span><span>1.0</span></div><div></div></div>
+    <div class="callout a" style="--d:4.6"><b>Plot twist:</b> the simplest trick won, and the famous one came last. One book is just too small for GraphRAG to shine.</div>
+    <div class="foot a" style="--d:5.4;font-size:18px;margin-top:0">One run, k=4. Gaps under ~0.05 are noise. Parent-based recipes see 2000-char chunks, vector ones 500.</div>
+  </section>
+
+  <!-- 10 · close -->
+  <section class="scene" id="s10">
+    <div class="kicker a">rag-learning-lab</div>
+    <h1 class="a" style="--d:.2">Build it from bricks.<br><span class="em">Then swap the bricks.</span></h1>
+    <div class="pick">
+      <div class="a" style="--d:1.0">Unstructured text</div><div class="a" style="--d:1.0">ParentChildRag</div>
+      <div class="a" style="--d:1.25">Questions that follow a pattern</div><div class="a" style="--d:1.25">HypotheticalQuestionRag</div>
+      <div class="a" style="--d:1.5">Data that's already a graph</div><div class="a" style="--d:1.5">Text2CypherQA</div>
+      <div class="a" style="--d:1.75">Many sources, open questions</div><div class="a" style="--d:1.75">AgenticRag</div>
+    </div>
+    <div class="cta a" style="--k:pop;--d:2.6">Repo link in the comments ↓</div>
+  </section>
+
+  <div id="prog"></div>
+</div></div>
+
+<div id="tip"></div>
+<div id="controls">
+  <button id="prev" aria-label="Previous scene">‹</button>
+  <button id="play" aria-label="Play or pause">❚❚</button>
+  <button id="next" aria-label="Next scene">›</button>
+  <span id="count">1 / 10</span>
+  <button id="replay">Replay</button>
+</div>
+
+<script>
+// Benchmark: examples/README.md "Benchmarking the text recipes" (one run).
+const BENCH = [
+  { name: "VectorRag", note: "vector", correct: .651, recall: .657, faithful: .947, latency: "1.9s", tokens: "713" },
+  { name: "VectorRag", note: "hybrid", correct: .645, recall: .608, faithful: .947, latency: "2.1s", tokens: "717" },
+  { name: "ParentChildRag", note: "", correct: .785, recall: .806, faithful: .978, latency: "2.0s", tokens: "2.2k", win: true },
+  { name: "ParentChildRag", note: "+ step-back", correct: .749, recall: .915, faithful: .988, latency: "3.0s", tokens: "2.4k" },
+  { name: "HypotheticalQuestionRag", note: "", correct: .733, recall: .871, faithful: 1.0, latency: "2.2s", tokens: "2.2k" },
+  { name: "GraphRag", note: "local search", correct: .616, recall: .821, faithful: .920, latency: "4.7s", tokens: "2.3k" },
+  { name: "GraphRag", note: "global search", correct: .475, recall: .323, faithful: .628, latency: "11.3s", tokens: "7.5k" },
+];
+const DURATIONS = [4.5, 7.5, 8, 7, 7, 8, 7.5, 6.5, 10, 7]; // seconds per scene (~73s)
+
+const chart = document.getElementById("chart");
+const tip = document.getElementById("tip");
+BENCH.forEach((r, i) => {
+  const row = document.createElement("div");
+  row.className = "row a" + (r.win ? " win" : "");
+  row.style.cssText = `--d:${1 + i * .3};--k:fade`;
+  row.innerHTML = `<div class="name">${r.name}${r.note ? `<small>${r.note}</small>` : ""}</div>
+    <div class="track"><div class="bar" style="--v:${r.correct};--d:${1.2 + i * .3}"></div></div>
+    <div class="val">${r.correct.toFixed(3)}</div>`;
+  row.addEventListener("mousemove", e => {
+    tip.textContent = `${r.name} ${r.note}\ncorrectness    ${r.correct.toFixed(3)}\ncontext recall ${r.recall.toFixed(3)}\nfaithfulness   ${r.faithful.toFixed(3)}\nlatency        ${r.latency}\ntokens/q       ${r.tokens}`;
+    tip.style.left = e.clientX + 14 + "px"; tip.style.top = e.clientY + 14 + "px"; tip.style.opacity = 1;
+  });
+  row.addEventListener("mouseleave", () => tip.style.opacity = 0);
+  chart.appendChild(row);
+});
+
+const params = new URLSearchParams(location.search);
+if (params.get("record")) document.body.classList.add("record");
+const scenes = [...document.querySelectorAll(".scene")];
+const prog = document.getElementById("prog");
+scenes.forEach(() => prog.appendChild(Object.assign(document.createElement("div"), { innerHTML: "<span></span>" })));
+const bars = [...prog.querySelectorAll("span")];
+
+let idx = 0, elapsed = 0, last = null, playing = !params.has("paused");
+const loop = !params.get("record");
+
+function show(n) {
+  idx = (n + scenes.length) % scenes.length; elapsed = 0;
+  scenes.forEach((s, k) => { s.classList.remove("active"); if (k === idx) { void s.offsetWidth; s.classList.add("active"); } });
+  bars.forEach((b, k) => b.style.width = k < idx ? "100%" : "0");
+  document.getElementById("count").textContent = `${idx + 1} / ${scenes.length}`;
+  document.body.dataset.scene = idx; // lets a recorder follow the timeline
+}
+function tick(now) {
+  if (last !== null && playing) {
+    elapsed += (now - last) / 1000;
+    bars[idx].style.width = Math.min(100, elapsed / DURATIONS[idx] * 100) + "%";
+    if (elapsed >= DURATIONS[idx]) {
+      if (idx === scenes.length - 1 && !loop) { playing = false; document.body.dataset.done = "1"; }
+      else show(idx + 1);
+    }
+  }
+  last = now; requestAnimationFrame(tick);
+}
+function setPlaying(p) {
+  playing = p; document.getElementById("play").textContent = p ? "❚❚" : "▶";
+  document.querySelectorAll(".scene.active .a, .scene.active .bar, .scene.active .pulse")
+    .forEach(el => el.style.animationPlayState = p ? "" : "paused");
+}
+
+document.getElementById("prev").onclick = () => show(idx - 1);
+document.getElementById("next").onclick = () => show(idx + 1);
+document.getElementById("replay").onclick = () => { show(0); setPlaying(true); };
+document.getElementById("play").onclick = () => setPlaying(!playing);
+addEventListener("keydown", e => {
+  if (e.key === " ") { e.preventDefault(); setPlaying(!playing); }
+  if (e.key === "ArrowRight") show(idx + 1);
+  if (e.key === "ArrowLeft") show(idx - 1);
+});
+
+function fit() {
+  const vp = document.getElementById("viewport").getBoundingClientRect();
+  document.getElementById("stage").style.transform = `scale(${Math.min(vp.width, vp.height) / 1080})`;
+}
+addEventListener("resize", fit); fit();
+
+// ?still=N renders scene N's final frame and holds it.
+const still = params.get("still");
+if (still) { document.body.classList.add("still", "record"); playing = false; }
+show(Number(still || params.get("scene") || 1) - 1);
+setPlaying(playing); requestAnimationFrame(tick);
+</script>
+</body>
+</html>
